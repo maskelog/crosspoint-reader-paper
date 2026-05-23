@@ -83,3 +83,6 @@ class HalGPIO {
 
   void transformTouchPoint(int16_t rawX, int16_t rawY, int16_t* outX, int16_t* outY) const;
 };
+
+// Global singleton — defined in src/main.cpp.
+extern HalGPIO gpio;

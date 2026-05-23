@@ -2,6 +2,7 @@
 
 #include <GfxRenderer.h>
 #include <HalClock.h>
+#include <HalGPIO.h>
 #include <HalPowerManager.h>
 #include <HalStorage.h>
 #include <Logging.h>
