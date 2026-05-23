@@ -7,10 +7,11 @@ extern HalClock halClock;  // Singleton
 
 // Real-time clock abstraction.
 //
-// On Paper S3 this is backed by the on-board BM8563 RTC via M5Unified's
-// M5.Rtc API. The BM8563 is less accurate than the DS3231 used on the X3
-// (~20 ppm vs ~2 ppm) and drifts further during deep sleep, so we expose a
-// best-effort time and rely on NTP resync to correct drift over time.
+// On Paper S3 this is backed by the on-board BM8563 RTC, addressed directly
+// over Wire1 (I2C1, the same physical bus as GT911 touch). The BM8563 is
+// less accurate than the DS3231 used on the X3 (~20 ppm vs ~2 ppm) and
+// drifts further during deep sleep, so we expose a best-effort time and rely
+// on NTP resync to correct drift over time.
 //
 // Time is stored in the RTC as UTC. The display-time offset (set by the user)
 // is applied only in formatTime().
@@ -25,8 +26,9 @@ class HalClock {
   static constexpr unsigned long CLOCK_POLL_MS = 10000;  // 10 seconds
 
  public:
-  // Call after M5.begin() / powerManager.begin(). Probes the BM8563 and marks
-  // _available accordingly.
+  // Call after gpio.begin() (which initialises the touch driver and thereby
+  // the shared I2C1 bus). Probes the BM8563 at 0x51 and marks _available
+  // accordingly.
   void begin();
 
   // True if the RTC was found and is usable.

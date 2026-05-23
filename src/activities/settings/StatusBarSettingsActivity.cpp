@@ -48,7 +48,10 @@ constexpr int TITLE_ITEMS = 3;
 const StrId titleNames[TITLE_ITEMS] = {StrId::STR_BOOK, StrId::STR_CHAPTER, StrId::STR_HIDE};
 
 const int widthMargin = 10;
-const int verticalPreviewPadding = 50;
+// Vertical gap between the bottom of the screen and the top of the preview
+// status bar. Must clear the button-hint band, which is 40px on the classic
+// theme but 80px on Lyra-family themes — leave room for the tallest case.
+const int verticalPreviewPadding = 100;
 const int verticalPreviewTextPadding = 40;
 }  // namespace
 
