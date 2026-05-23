@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Arduino.h>
+#include <Wire.h>
 
 class HalClock;
 extern HalClock halClock;  // Singleton
@@ -19,10 +20,9 @@ class HalClock {
   bool _available = false;
   mutable uint8_t _cachedHour = 0;
   mutable uint8_t _cachedMinute = 0;
+  mutable bool _hasCachedTime = false;
   mutable unsigned long _lastPollMs = 0;
 
-  // Polling cadence — RTC reads go over the shared I2C bus, so we cache to
-  // avoid hammering it when the status bar redraws multiple times per second.
   static constexpr unsigned long CLOCK_POLL_MS = 10000;  // 10 seconds
 
  public:
@@ -31,28 +31,30 @@ class HalClock {
   // accordingly.
   void begin();
 
-  // True if the RTC was found and is usable.
+  // True if the BM8563 RTC responded to the probe at begin() time.
   bool isAvailable() const { return _available; }
 
-  // Read the current UTC time from the RTC (with 10-second caching). Returns
-  // false if the RTC is unavailable.
+  // Get current UTC hour (0-23) and minute (0-59) with 10-second caching.
+  // Returns false if RTC is not available.
   bool getTime(uint8_t& hour, uint8_t& minute) const;
 
-  // Format "HH:MM" into a caller-provided buffer (>= 6 bytes for 24h, >= 9 for
-  // 12h with " AM"/" PM" suffix).
-  //
-  // utcOffsetBiased: half-hour offset biased so 24 = UTC+0, 0 = UTC-12:00,
-  //                  52 = UTC+14:00.
-  // use24h:          when false, format as 12h with AM/PM.
-  //
-  // Returns false if the RTC is unavailable.
-  bool formatTime(char* buf, size_t bufSize, uint8_t utcOffsetBiased = 24, bool use24h = true) const;
+  // Format time into a caller-provided buffer.
+  // 24h mode produces "HH:MM" (needs >=6 bytes); 12h mode produces
+  // "H:MM AM"/"HH:MM PM" (needs >=9 bytes).
+  // utcOffsetQuarterHoursBiased: biased quarter-hour offset
+  //   (48 = UTC+0, 0 = UTC-12, 104 = UTC+14).
+  // use12Hour: when true, format as 12-hour clock with AM/PM suffix.
+  // Returns false if RTC is not available.
+  bool formatTime(char* buf, size_t bufSize, uint8_t utcOffsetQuarterHoursBiased = 48, bool use12Hour = false) const;
 
-  // Sync the RTC from an NTP server. Requires WiFi to be already connected.
-  // Blocks briefly (~2-3s) while waiting for the first NTP response.
+  // Sync the RTC from an NTP server. Requires WiFi to be connected.
+  // Blocks for up to ~5s while waiting for SNTP response.
+  // Returns true if the RTC was successfully updated.
+  //
+  // Debouncing (skip if already synced once) is enforced by the caller, not
+  // here, so the HAL stays free of any app-layer settings dependency.
   bool syncFromNTP();
 
  private:
-  // Push a fresh UTC time into the BM8563.
   bool writeTimeToRTC(uint8_t hour, uint8_t minute, uint8_t second);
 };

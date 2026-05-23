@@ -8,6 +8,7 @@
 
 #include <map>
 
+#include "CrossPointSettings.h"
 #include "MappedInputManager.h"
 #include "WifiCredentialStore.h"
 #include "activities/util/KeyboardEntryActivity.h"
@@ -251,9 +252,18 @@ void WifiSelectionActivity::checkConnectionStatus() {
     connectedIP = ipStr;
     autoConnecting = false;
 
-    // Best-effort: nudge the RTC into UTC alignment via NTP. Blocks ~2–3s max
-    // and silently no-ops if the BM8563 isn't available.
-    halClock.syncFromNTP();
+    // Sync RTC from NTP on the first successful WiFi connection only. The
+    // BM8563 drifts much more than the X3's DS3231 across deep sleep, so
+    // once is *not* enough in practice — but users can force a re-sync from
+    // Settings > Customise Status Bar > Sync clock now whenever drift is
+    // unacceptable. Resetting clockHasBeenSynced from the web UI also
+    // triggers a re-sync on next WiFi connect.
+    if (halClock.isAvailable() && !SETTINGS.clockHasBeenSynced) {
+      if (halClock.syncFromNTP()) {
+        SETTINGS.clockHasBeenSynced = 1;
+        SETTINGS.saveToFile();
+      }
+    }
 
     // Save this as the last connected network - SD card operations need lock as
     // we use SPI for both

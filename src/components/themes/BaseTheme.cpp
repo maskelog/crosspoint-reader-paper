@@ -743,9 +743,8 @@ void BaseTheme::drawStatusBar(GfxRenderer& renderer, const float bookProgress, c
   // Draw Clock (requires BM8563 RTC; user-toggled)
   int clockTextWidth = 0;
   if (SETTINGS.statusBarClock && halClock.isAvailable()) {
-    char timeBuf[12];  // up to "HH:MM AM" + NUL
-    const bool use24h = (SETTINGS.statusBarClockFormat == 0);
-    if (halClock.formatTime(timeBuf, sizeof(timeBuf), SETTINGS.clockUtcOffset, use24h)) {
+    char timeBuf[9];  // up to "HH:MM PM" + NUL
+    if (halClock.formatTime(timeBuf, sizeof(timeBuf), SETTINGS.clockUtcOffsetQ, SETTINGS.clockFormat == 1)) {
       clockTextWidth = renderer.getTextWidth(SMALL_FONT_ID, timeBuf);
       const int clockX = renderer.getScreenWidth() - metrics.statusBarHorizontalMargin - orientedMarginRight -
                          progressTextWidth - (progressTextWidth > 0 ? 10 : 0) - clockTextWidth;
