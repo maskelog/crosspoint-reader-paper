@@ -1,15 +1,11 @@
 #include "Activity.h"
 
 #include "ActivityManager.h"
-#if CROSSPOINT_PAPERS3
 #include "components/UITheme.h"
-#endif
 
 void Activity::onEnter() {
   LOG_DBG("ACT", "Entering activity: %s", name.c_str());
   mappedInput.clearState();  // Prevent stale touches from triggering actions in the new activity
-#if CROSSPOINT_PAPERS3
-  renderer.requestFullRefresh();  // Full e-ink refresh on every activity transition to prevent ghosting
   if (!isReaderActivity()) {
     // Non-reader activities always render in portrait so footer buttons match
     // the physical bottom of the device where drawButtonHints draws them.
@@ -18,7 +14,6 @@ void Activity::onEnter() {
   mappedInput.setTouchOrientation(renderer.getOrientation());
   // Enable footer nav buttons for all non-reader activities; readers use full screen for content
   mappedInput.setFooterHeight(isReaderActivity() ? 0 : UITheme::getInstance().getMetrics().buttonHintsHeight);
-#endif
 }
 
 void Activity::onExit() { LOG_DBG("ACT", "Exiting activity: %s", name.c_str()); }

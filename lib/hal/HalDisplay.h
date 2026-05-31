@@ -1,7 +1,8 @@
 #pragma once
 #include <Arduino.h>
 
-class EPD_Painter;
+#include <M5GFX.h>  // LGFX_Sprite
+#include <M5Unified.h>
 
 class HalDisplay {
  public:
@@ -21,17 +22,18 @@ class HalDisplay {
   // Initialize the display hardware and driver
   void begin();
 
-  // Display dimensions (M5PaperS3: 960x540 physical landscape)
-  static constexpr uint16_t DISPLAY_WIDTH = 960;
+  // Physical framebuffer dimensions — landscape (960x540).
+  // M5Paper native panel is 540x960 portrait; setRotation(1) gives the
+  // 960x540 landscape framebuffer that GfxRenderer rotates portrait content
+  // into via its Portrait orientation mapping.
+  static constexpr uint16_t DISPLAY_WIDTH  = 960;
   static constexpr uint16_t DISPLAY_HEIGHT = 540;
-  // 8bpp framebuffer: 1 byte per pixel, values 0(white)..3(black) — EPD_Painter native format
+  // 8bpp palette-index framebuffer: 1 byte per pixel, values 0(white)..3(black)
   static constexpr uint32_t BUFFER_SIZE = DISPLAY_WIDTH * DISPLAY_HEIGHT;
   // For unpacking 1-bit source images only
   static constexpr uint16_t DISPLAY_WIDTH_BYTES = DISPLAY_WIDTH / 8;
 
-  // Runtime accessors — match the X3 HalDisplay surface for shared lib code
-  // (JpegToBmpConverter, GfxRenderer). The Paper S3 panel is fixed-size so
-  // these can return constants directly.
+  // Runtime accessors — M5Paper panel is fixed-size so these return constants.
   uint16_t getDisplayWidth() const { return DISPLAY_WIDTH; }
   uint16_t getDisplayHeight() const { return DISPLAY_HEIGHT; }
   uint16_t getDisplayWidthBytes() const { return DISPLAY_WIDTH_BYTES; }
@@ -61,16 +63,16 @@ class HalDisplay {
   void displayGrayBuffer(bool turnOffScreen = false);
 
  private:
-  // 8bpp framebuffer in PSRAM — EPD_Painter native format (0=white, 3=black)
-  uint8_t* frameBuffer;
-
-  // EPD_Painter driver instance
-  EPD_Painter* epd = nullptr;
+  // 8bpp palette-index framebuffer in PSRAM (0=white, 3=black).
+  // On M5Paper this points directly into the LGFX_Sprite internal buffer.
+  uint8_t* frameBuffer = nullptr;
 
   // Grayscale buffers (8bpp, allocated on demand for two-pass rendering)
   uint8_t* grayLsbBuffer = nullptr;
   uint8_t* grayMsbBuffer = nullptr;
   void freeGrayscaleBuffers();
+
+  LGFX_Sprite* sprite = nullptr;
 };
 
 // Global singleton — defined in src/main.cpp.

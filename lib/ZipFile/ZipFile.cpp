@@ -3,6 +3,7 @@
 #include <HalStorage.h>
 #include <InflateReader.h>
 #include <Logging.h>
+#include <freertos/task.h>
 
 #include <algorithm>
 
@@ -478,6 +479,7 @@ bool ZipFile::readFileToStream(const char* filename, Print& out, const size_t ch
         return false;
       }
       remaining -= dataRead;
+      vTaskDelay(1);
     }
 
     free(buffer);
@@ -531,6 +533,7 @@ bool ZipFile::readFileToStream(const char* filename, Print& out, const size_t ch
           LOG_ERR("ZIP", "Failed to write all output bytes to stream");
           break;
         }
+        vTaskDelay(1);
       }
 
       if (status == InflateStatus::Done) {

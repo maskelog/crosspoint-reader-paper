@@ -140,7 +140,6 @@ void EpubReaderActivity::loop() {
     }
   }
 
-#if CROSSPOINT_PAPERS3
   // On the 2-finger lift frame, BTN_BACK is set in currentState while the zone
   // button transitions out of previousState, causing wasReleased(zone) to fire
   // simultaneously.  Skip all zone-based actions when BTN_BACK is active so the
@@ -148,7 +147,6 @@ void EpubReaderActivity::loop() {
   if (mappedInput.isPressed(MappedInputManager::Button::Back)) {
     return;
   }
-#endif
 
   // Enter reader menu activity.
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
@@ -580,10 +578,8 @@ void EpubReaderActivity::render(RenderLock&& lock) {
         section.reset();
         return;
       }
-#if CROSSPOINT_PAPERS3
       // Force full refresh after indexing popup to clear its ghost
       renderer.requestFullRefresh();
-#endif
     } else {
       LOG_DBG("ERS", "Cache found, skipping build...");
     }
@@ -665,8 +661,6 @@ void EpubReaderActivity::render(RenderLock&& lock) {
     renderContents(std::move(p), orientedMarginTop, orientedMarginRight, orientedMarginBottom, orientedMarginLeft);
     LOG_DBG("ERS", "Rendered page in %dms", millis() - start);
   }
-  silentIndexNextChapterIfNeeded(renderer.getScreenWidth() - orientedMarginLeft - orientedMarginRight,
-                                 renderer.getScreenHeight() - orientedMarginTop - orientedMarginBottom);
   saveProgress(currentSpineIndex, section->currentPage, section->pageCount);
 
   if (pendingScreenshot) {

@@ -1,11 +1,9 @@
 #include "ActivityManager.h"
 
 #include <HalPowerManager.h>
-#if CROSSPOINT_PAPERS3
 #include "CrossPointSettings.h"
 #include "components/UITheme.h"
 #include "reader/ReaderUtils.h"
-#endif
 
 #include "boot_sleep/BootActivity.h"
 #include "boot_sleep/SleepActivity.h"
@@ -91,7 +89,6 @@ void ActivityManager::loop() {
         LOG_DBG("ACT", "Popped from activity stack, new size = %zu", stackActivities.size());
         // Flush stale input so gestures from the child (e.g. 2-finger back) don't leak into the parent
         currentActivity->mappedInput.clearState();
-#if CROSSPOINT_PAPERS3
         // Restore footer height for the returning activity (reader = 0, others = buttonHintsHeight)
         currentActivity->mappedInput.setFooterHeight(
             currentActivity->isReaderActivity() ? 0 : UITheme::getInstance().getMetrics().buttonHintsHeight);
@@ -100,7 +97,6 @@ void ActivityManager::loop() {
           ReaderUtils::applyOrientation(currentActivity->renderer, SETTINGS.orientation);
           currentActivity->mappedInput.setTouchOrientation(SETTINGS.orientation);
         }
-#endif
         // Handle result if necessary
         if (currentActivity->resultHandler) {
           LOG_DBG("ACT", "Handling result for popped activity");

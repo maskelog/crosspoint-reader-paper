@@ -55,9 +55,11 @@ def get_base_version(project_dir):
 
 
 def inject_version(env):
-    # Only applies to the dev (default) environment; release envs set the
-    # version via build_flags in platformio.ini and are unaffected.
-    if env['PIOENV'] != 'default':
+    # Only inject if CROSSPOINT_VERSION is not already defined — release envs
+    # set it explicitly via build_flags in platformio.ini and are unaffected.
+    existing = [d[0] if isinstance(d, (list, tuple)) else d
+                for d in env.get('CPPDEFINES', [])]
+    if 'CROSSPOINT_VERSION' in existing:
         return
 
     project_dir = env['PROJECT_DIR']

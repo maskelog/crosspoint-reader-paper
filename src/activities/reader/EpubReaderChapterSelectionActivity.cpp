@@ -11,11 +11,7 @@ int EpubReaderChapterSelectionActivity::getTotalItems() const { return epub->get
 
 int EpubReaderChapterSelectionActivity::getPageItems() const {
   // Layout constants used in renderScreen
-#if CROSSPOINT_PAPERS3
   constexpr int lineHeight = 75;
-#else
-  constexpr int lineHeight = 30;
-#endif
 
   const int screenHeight = renderer.getScreenHeight();
   const auto orientation = renderer.getOrientation();
@@ -51,7 +47,6 @@ void EpubReaderChapterSelectionActivity::loop() {
   const int pageItems = getPageItems();
   const int totalItems = getTotalItems();
 
-#if CROSSPOINT_PAPERS3
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
     const auto newSpineIndex = epub->getSpineIndexForTocIndex(selectorIndex);
     if (newSpineIndex == -1) {
@@ -89,7 +84,6 @@ void EpubReaderChapterSelectionActivity::loop() {
     selectorIndex = ButtonNavigator::previousPageIndex(selectorIndex, totalItems, pageItems);
     requestUpdate();
   });
-#endif
 }
 
 void EpubReaderChapterSelectionActivity::render(RenderLock&&) {
@@ -116,11 +110,7 @@ void EpubReaderChapterSelectionActivity::render(RenderLock&&) {
       contentX + (contentWidth - renderer.getTextWidth(UI_12_FONT_ID, tr(STR_SELECT_CHAPTER), EpdFontFamily::BOLD)) / 2;
   renderer.drawText(UI_12_FONT_ID, titleX, 15 + contentY, tr(STR_SELECT_CHAPTER), true, EpdFontFamily::BOLD);
 
-#if CROSSPOINT_PAPERS3
   constexpr int lineHeight = 75;
-#else
-  constexpr int lineHeight = 30;
-#endif
   const int textLineH = renderer.getLineHeight(UI_10_FONT_ID);
   const int textYOff = (lineHeight - textLineH) / 2;
 

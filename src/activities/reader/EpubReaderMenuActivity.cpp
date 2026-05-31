@@ -9,9 +9,7 @@
 #include "fontIds.h"
 
 namespace {
-#if CROSSPOINT_PAPERS3
 uint8_t orientationLabelIndex(uint8_t orientation) { return orientation == CrossPointSettings::LANDSCAPE_CCW ? 1 : 0; }
-#endif
 }  // namespace
 
 EpubReaderMenuActivity::EpubReaderMenuActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
@@ -22,11 +20,7 @@ EpubReaderMenuActivity::EpubReaderMenuActivity(GfxRenderer& renderer, MappedInpu
       menuItems(buildMenuItems(hasFootnotes)),
       title(title),
       pendingOrientation(
-#if CROSSPOINT_PAPERS3
           CrossPointSettings::normalizePaperS3Orientation(currentOrientation)
-#else
-          currentOrientation
-#endif
               ),
       currentPage(currentPage),
       totalPages(totalPages),
@@ -74,11 +68,7 @@ void EpubReaderMenuActivity::loop() {
     const auto selectedAction = menuItems[selectedIndex].action;
     if (selectedAction == MenuAction::ROTATE_SCREEN) {
       // Cycle orientation preview locally; actual rotation happens on menu exit.
-#if CROSSPOINT_PAPERS3
       pendingOrientation = CrossPointSettings::nextPaperS3Orientation(pendingOrientation);
-#else
-      pendingOrientation = (pendingOrientation + 1) % orientationLabels.size();
-#endif
       requestUpdate();
       return;
     }
@@ -139,11 +129,7 @@ void EpubReaderMenuActivity::render(RenderLock&&) {
 
   // Menu Items
   const int startY = 85 + contentY;
-#if CROSSPOINT_PAPERS3
   constexpr int lineHeight = 75;
-#else
-  constexpr int lineHeight = 30;
-#endif
   const int textLineH = renderer.getLineHeight(UI_10_FONT_ID);
   const int textYOff = (lineHeight - textLineH) / 2;
 
@@ -161,11 +147,7 @@ void EpubReaderMenuActivity::render(RenderLock&&) {
     if (menuItems[i].action == MenuAction::ROTATE_SCREEN) {
       // Render current orientation value on the right edge of the content area.
       const char* value =
-#if CROSSPOINT_PAPERS3
           I18N.get(orientationLabels[orientationLabelIndex(pendingOrientation)]);
-#else
-          I18N.get(orientationLabels[pendingOrientation]);
-#endif
       const auto width = renderer.getTextWidth(UI_10_FONT_ID, value);
       renderer.drawText(UI_10_FONT_ID, contentX + contentWidth - 20 - width, displayY + textYOff, value, !isSelected);
     }

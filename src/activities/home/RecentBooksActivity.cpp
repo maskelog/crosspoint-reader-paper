@@ -58,7 +58,6 @@ void RecentBooksActivity::loop() {
   }
 
   int listSize = static_cast<int>(recentBooks.size());
-#if CROSSPOINT_PAPERS3
   // On Paper S3, Up/Down move one row at a time
   if (mappedInput.wasReleased(MappedInputManager::Button::Up)) {
     selectorIndex = ButtonNavigator::previousIndex(static_cast<int>(selectorIndex), listSize);
@@ -70,28 +69,6 @@ void RecentBooksActivity::loop() {
     requestUpdate();
     return;
   }
-#else
-  const int pageItems = UITheme::getInstance().getNumberOfItemsPerPage(renderer, true, false, true, true);
-  buttonNavigator.onNextRelease([this, listSize] {
-    selectorIndex = ButtonNavigator::nextIndex(static_cast<int>(selectorIndex), listSize);
-    requestUpdate();
-  });
-
-  buttonNavigator.onPreviousRelease([this, listSize] {
-    selectorIndex = ButtonNavigator::previousIndex(static_cast<int>(selectorIndex), listSize);
-    requestUpdate();
-  });
-
-  buttonNavigator.onNextContinuous([this, listSize, pageItems] {
-    selectorIndex = ButtonNavigator::nextPageIndex(static_cast<int>(selectorIndex), listSize, pageItems);
-    requestUpdate();
-  });
-
-  buttonNavigator.onPreviousContinuous([this, listSize, pageItems] {
-    selectorIndex = ButtonNavigator::previousPageIndex(static_cast<int>(selectorIndex), listSize, pageItems);
-    requestUpdate();
-  });
-#endif
 }
 
 void RecentBooksActivity::render(RenderLock&&) {

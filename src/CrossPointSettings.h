@@ -66,7 +66,6 @@ class CrossPointSettings {
     ORIENTATION_COUNT
   };
 
-#if CROSSPOINT_PAPERS3
   static bool isPaperS3OrientationSupported(uint8_t orientation) {
     return orientation == PORTRAIT || orientation == LANDSCAPE_CCW;
   }
@@ -78,7 +77,6 @@ class CrossPointSettings {
   static uint8_t nextPaperS3Orientation(uint8_t orientation) {
     return orientation == LANDSCAPE_CCW ? PORTRAIT : LANDSCAPE_CCW;
   }
-#endif
 
   // Front button layout options (legacy)
   // Default: Back, Confirm, Left, Right
@@ -214,11 +212,7 @@ class CrossPointSettings {
   // Hide battery percentage
   uint8_t hideBatteryPercentage = HIDE_NEVER;
   // Long-press chapter skip on side buttons
-#if CROSSPOINT_PAPERS3
   uint8_t longPressChapterSkip = 0;
-#else
-  uint8_t longPressChapterSkip = 1;
-#endif
   // UI Theme
   uint8_t uiTheme = LYRA;
   // Sunlight fading compensation

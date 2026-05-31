@@ -62,7 +62,6 @@ void XtcReaderActivity::onExit() {
 }
 
 void XtcReaderActivity::loop() {
-#if CROSSPOINT_PAPERS3
   // On the 2-finger lift frame, BTN_BACK is set in currentState while the zone
   // button transitions out of previousState, causing wasReleased(zone) to fire
   // simultaneously.  Skip all zone-based actions when BTN_BACK is active so the
@@ -70,7 +69,6 @@ void XtcReaderActivity::loop() {
   if (mappedInput.isPressed(MappedInputManager::Button::Back)) {
     return;
   }
-#endif
 
   // Enter chapter selection activity
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {

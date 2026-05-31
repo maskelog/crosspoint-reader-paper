@@ -1,23 +1,21 @@
 #pragma once
 
-#include <functional>
+#include <cstdint>
 #include <string>
 #include <vector>
 
 #include "../Activity.h"
-#include "RecentBooksStore.h"
-#include "util/ButtonNavigator.h"
 
 class FileBrowserActivity final : public Activity {
  private:
   // Deletion
   void clearFileMetadata(const std::string& fullPath);
 
-  ButtonNavigator buttonNavigator;
-
   size_t selectorIndex = 0;
 
   bool lockLongPressBack = false;
+  bool ignoreConfirmRelease = false;
+  uint32_t lastNavigationTime = 0;
 
   // Files state
   std::string basepath = "/";
@@ -26,6 +24,8 @@ class FileBrowserActivity final : public Activity {
   // Data loading
   void loadFiles();
   size_t findEntry(const std::string& name) const;
+  void navigateToDirectory(const std::string& entry);
+  void moveSelection(int nextIndex);
 
  public:
   explicit FileBrowserActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::string initialPath = "/")

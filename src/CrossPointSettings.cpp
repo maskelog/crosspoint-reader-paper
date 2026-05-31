@@ -21,7 +21,6 @@ void readAndValidate(FsFile& file, uint8_t& member, const uint8_t maxValue) {
   }
 }
 
-#if CROSSPOINT_PAPERS3
 bool CrossPointSettings::normalizePaperS3Orientation() {
   if (!isPaperS3OrientationSupported(orientation)) {
     orientation = PORTRAIT;
@@ -29,7 +28,6 @@ bool CrossPointSettings::normalizePaperS3Orientation() {
   }
   return false;
 }
-#endif
 
 namespace {
 constexpr uint8_t SETTINGS_FILE_VERSION = 1;
@@ -98,9 +96,7 @@ bool CrossPointSettings::loadFromFile() {
     if (!json.isEmpty()) {
       bool resave = false;
       bool result = JsonSettingsIO::loadSettings(*this, json.c_str(), &resave);
-#if CROSSPOINT_PAPERS3
       resave = normalizePaperS3Orientation() || resave;
-#endif
       if (result && resave) {
         if (saveToFile()) {
           LOG_DBG("CPS", "Resaved settings to update format");
@@ -115,9 +111,7 @@ bool CrossPointSettings::loadFromFile() {
   // Fall back to binary migration
   if (Storage.exists(SETTINGS_FILE_BIN)) {
     if (loadFromBinaryFile()) {
-#if CROSSPOINT_PAPERS3
       normalizePaperS3Orientation();
-#endif
       if (saveToFile()) {
         Storage.rename(SETTINGS_FILE_BIN, SETTINGS_FILE_BAK);
         LOG_DBG("CPS", "Migrated settings.bin to settings.json");

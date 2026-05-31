@@ -1,7 +1,8 @@
 #pragma once
 
 #include <Arduino.h>
-#include <HalTouch.h>
+
+#include <M5Unified.h>
 
 // Number of virtual buttons (touch zones + gestures + power)
 #define HALGPIO_NUM_BUTTONS 10
@@ -57,8 +58,6 @@ class HalGPIO {
  private:
   // 3-zone vertical split: converts touch X to LEFT/CENTER/RIGHT
   int touchZoneToButton(int16_t touchX, int16_t touchY) const;
-
-  HalTouch touch;
 
   // Button state tracking (per-frame edge detection)
   uint16_t currentState = 0;   // Bitmask of currently pressed buttons

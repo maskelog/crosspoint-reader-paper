@@ -1,5 +1,6 @@
 #include "GfxRenderer.h"
 
+#include <efont.h>
 #include <FontDecompressor.h>
 #include <Logging.h>
 #include <Utf8.h>
@@ -31,6 +32,18 @@ void GfxRenderer::begin() {
 }
 
 void GfxRenderer::insertFont(const int fontId, EpdFontFamily font) { fontMap.insert({fontId, font}); }
+
+const EpdFontFamily* GfxRenderer::resolveFontFamily(const EpdFontFamily& primary, const uint32_t cp,
+                                                     const EpdFontFamily::Style style) const {
+  if (fallbackFontId_ < 0 || primary.containsCodepoint(cp, style)) {
+    return &primary;
+  }
+  const auto it = fontMap.find(fallbackFontId_);
+  if (it != fontMap.end() && it->second.containsCodepoint(cp, EpdFontFamily::REGULAR)) {
+    return &it->second;
+  }
+  return &primary;
+}
 
 // Translate logical (x,y) coordinates to physical panel coordinates based on current orientation
 // This should always be inlined for better performance
@@ -67,6 +80,77 @@ static inline void rotateCoordinates(const GfxRenderer::Orientation orientation,
 }
 
 enum class TextRotation { None, Rotated90CW };
+
+namespace {
+
+constexpr int EFONT_SCALE = 2;
+constexpr int EFONT_GLYPH_SIZE = 16;
+constexpr int EFONT_ASCENT = 28;
+
+bool isEfontFallbackCodepoint(const uint32_t cp) {
+  return cp <= 0xFFFF &&
+         ((cp >= 0x1100 && cp <= 0x11FF) ||    // Hangul Jamo
+          (cp >= 0x2E80 && cp <= 0x2EFF) ||    // CJK radicals supplement
+          (cp >= 0x3000 && cp <= 0x303F) ||    // CJK symbols/punctuation
+          (cp >= 0x3040 && cp <= 0x30FF) ||    // Hiragana/Katakana
+          (cp >= 0x3130 && cp <= 0x318F) ||    // Hangul compatibility Jamo
+          (cp >= 0x31F0 && cp <= 0x31FF) ||    // Katakana phonetic extensions
+          (cp >= 0x3400 && cp <= 0x4DBF) ||    // CJK extension A
+          (cp >= 0x4E00 && cp <= 0x9FFF) ||    // CJK unified ideographs
+          (cp >= 0xAC00 && cp <= 0xD7AF) ||    // Hangul syllables/Jamo extended-B
+          (cp >= 0xF900 && cp <= 0xFAFF) ||    // CJK compatibility ideographs
+          (cp >= 0xFE30 && cp <= 0xFE6F) ||    // CJK compatibility forms
+          (cp >= 0xFF00 && cp <= 0xFFEF));     // Half/fullwidth forms
+}
+
+bool loadEfontGlyph(const uint32_t cp, uint8_t font[32]) {
+  if (!isEfontFallbackCodepoint(cp)) return false;
+  getefontData(font, static_cast<uint16_t>(cp));
+  for (uint8_t i = 0; i < 32; ++i) {
+    if (font[i] != 0) return true;
+  }
+  getefontData(font, static_cast<uint16_t>('?'));
+  return true;
+}
+
+int efontAdvanceX(const uint32_t cp) {
+  return (cp < 0x0100 ? 8 : EFONT_GLYPH_SIZE) * EFONT_SCALE;
+}
+
+void renderEfontGlyph(const GfxRenderer& renderer, const GfxRenderer::RenderMode renderMode, const uint32_t cp,
+                      const int cursorX, const int baselineY, const bool pixelState) {
+  uint8_t font[32];
+  if (!loadEfontGlyph(cp, font)) return;
+
+  const int topY = baselineY - EFONT_ASCENT;
+  for (uint8_t row = 0; row < EFONT_GLYPH_SIZE; ++row) {
+    const uint16_t fontData = (static_cast<uint16_t>(font[row * 2]) << 8) | font[row * 2 + 1];
+    for (uint8_t col = 0; col < EFONT_GLYPH_SIZE; ++col) {
+      if (((0x8000 >> col) & fontData) == 0) continue;
+      const int x = cursorX + col * EFONT_SCALE;
+      const int y = topY + row * EFONT_SCALE;
+      if (EFONT_SCALE == 1) {
+        if (renderMode == GfxRenderer::GRAYSCALE_DIRECT) {
+          renderer.drawPixelGray(x, y, 3);
+        } else {
+          renderer.drawPixel(x, y, pixelState);
+        }
+      } else {
+        for (int dy = 0; dy < EFONT_SCALE; ++dy) {
+          for (int dx = 0; dx < EFONT_SCALE; ++dx) {
+            if (renderMode == GfxRenderer::GRAYSCALE_DIRECT) {
+              renderer.drawPixelGray(x + dx, y + dy, 3);
+            } else {
+              renderer.drawPixel(x + dx, y + dy, pixelState);
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+}  // namespace
 
 // Shared glyph rendering logic for normal and rotated text.
 // Coordinate mapping and cursor advance direction are selected at compile time via the template parameter.
@@ -172,7 +256,6 @@ void GfxRenderer::drawPixel(const int x, const int y, const bool state) const {
 
   // Bounds checking against physical panel dimensions
   if (phyX < 0 || phyX >= HalDisplay::DISPLAY_WIDTH || phyY < 0 || phyY >= HalDisplay::DISPLAY_HEIGHT) {
-    LOG_ERR("GFX", "!! Outside range (%d, %d) -> (%d, %d)", x, y, phyX, phyY);
     return;
   }
 
@@ -224,6 +307,9 @@ void GfxRenderer::drawText(const int fontId, const int x, const int y, const cha
 
   if (fontCacheManager_ && fontCacheManager_->isScanning()) {
     fontCacheManager_->recordText(text, fontId, style);
+    if (fallbackFontId_ >= 0 && fallbackFontId_ != fontId) {
+      fontCacheManager_->recordText(text, fallbackFontId_, EpdFontFamily::REGULAR);
+    }
     return;
   }
 
@@ -257,14 +343,24 @@ void GfxRenderer::drawText(const int fontId, const int x, const int y, const cha
       lastBaseX += fp4::toPixel(prevAdvanceFP + kernFP);       // snap 12.4 fixed-point to nearest pixel
     }
 
-    const EpdGlyph* glyph = font.getGlyph(cp, style);
+    const EpdFontFamily* effectiveFont = resolveFontFamily(font, cp, style);
+    const EpdFontFamily::Style effectiveStyle = (effectiveFont == &font) ? style : EpdFontFamily::REGULAR;
+    const bool effectiveHasCodepoint = effectiveFont->containsCodepoint(cp, effectiveStyle);
+    const EpdGlyph* glyph = effectiveHasCodepoint ? effectiveFont->getGlyph(cp, effectiveStyle) : nullptr;
+    uint8_t efontGlyph[32];
+    const bool useEfont = glyph == nullptr && loadEfontGlyph(cp, efontGlyph);
 
-    lastBaseLeft = glyph ? glyph->left : 0;
-    lastBaseWidth = glyph ? glyph->width : 0;
-    lastBaseTop = glyph ? glyph->top : 0;
-    prevAdvanceFP = glyph ? glyph->advanceX : 0;  // 12.4 fixed-point
+    lastBaseLeft = useEfont ? 0 : (glyph ? glyph->left : 0);
+    lastBaseWidth = useEfont ? efontAdvanceX(cp) : (glyph ? glyph->width : 0);
+    lastBaseTop = useEfont ? EFONT_ASCENT : (glyph ? glyph->top : 0);
+    prevAdvanceFP = useEfont ? fp4::fromPixel(efontAdvanceX(cp)) : (glyph ? glyph->advanceX : 0);
 
-    renderCharImpl<TextRotation::None>(*this, renderMode, font, cp, lastBaseX, yPos, black, style);
+    if (useEfont) {
+      renderEfontGlyph(*this, renderMode, cp, lastBaseX, yPos, black);
+    } else {
+      renderCharImpl<TextRotation::None>(*this, renderMode, *effectiveFont, cp, lastBaseX, yPos, black,
+                                         effectiveStyle);
+    }
     prevCp = cp;
   }
 }
@@ -1064,8 +1160,15 @@ int GfxRenderer::getTextAdvanceX(const int fontId, const char* text, EpdFontFami
     if (prevCp != 0) {
       widthFP += font.getKerning(prevCp, cp, style);  // 4.4 fixed-point kern
     }
-    const EpdGlyph* glyph = font.getGlyph(cp, style);
-    if (glyph) widthFP += glyph->advanceX;  // 12.4 fixed-point advance
+    const EpdFontFamily* effectiveFont = resolveFontFamily(font, cp, style);
+    const EpdFontFamily::Style effectiveStyle = (effectiveFont == &font) ? style : EpdFontFamily::REGULAR;
+    const bool effectiveHasCodepoint = effectiveFont->containsCodepoint(cp, effectiveStyle);
+    const EpdGlyph* glyph = effectiveHasCodepoint ? effectiveFont->getGlyph(cp, effectiveStyle) : nullptr;
+    if (glyph) {
+      widthFP += glyph->advanceX;  // 12.4 fixed-point advance
+    } else if (isEfontFallbackCodepoint(cp)) {
+      widthFP += fp4::fromPixel(efontAdvanceX(cp));
+    }
     prevCp = cp;
   }
   return fp4::toPixel(widthFP);  // snap 12.4 fixed-point to nearest pixel
@@ -1144,14 +1247,20 @@ void GfxRenderer::drawTextRotated90CW(const int fontId, const int x, const int y
       lastBaseY -= fp4::toPixel(prevAdvanceFP + kernFP);       // snap 12.4 fixed-point to nearest pixel
     }
 
-    const EpdGlyph* glyph = font.getGlyph(cp, style);
+    const EpdFontFamily* effectiveFont = resolveFontFamily(font, cp, style);
+    const EpdFontFamily::Style effectiveStyle = (effectiveFont == &font) ? style : EpdFontFamily::REGULAR;
+    const bool effectiveHasCodepoint = effectiveFont->containsCodepoint(cp, effectiveStyle);
+    const EpdGlyph* glyph = effectiveHasCodepoint ? effectiveFont->getGlyph(cp, effectiveStyle) : nullptr;
 
     lastBaseLeft = glyph ? glyph->left : 0;
     lastBaseWidth = glyph ? glyph->width : 0;
     lastBaseTop = glyph ? glyph->top : 0;
     prevAdvanceFP = glyph ? glyph->advanceX : 0;  // 12.4 fixed-point
 
-    renderCharImpl<TextRotation::Rotated90CW>(*this, renderMode, font, cp, x, lastBaseY, black, style);
+    if (glyph) {
+      renderCharImpl<TextRotation::Rotated90CW>(*this, renderMode, *effectiveFont, cp, x, lastBaseY, black,
+                                               effectiveStyle);
+    }
     prevCp = cp;
   }
 }

@@ -8,6 +8,7 @@
 #include <functional>
 #include <limits>
 #include <vector>
+#include <freertos/task.h>
 
 #include "hyphenation/Hyphenator.h"
 
@@ -131,6 +132,9 @@ std::vector<uint16_t> ParsedText::calculateWordWidths(const GfxRenderer& rendere
 
   for (size_t i = 0; i < words.size(); ++i) {
     wordWidths.push_back(measureWordWidth(renderer, fontId, words[i], wordStyles[i]));
+    if ((i & 0x3F) == 0x3F) {
+      vTaskDelay(1);
+    }
   }
 
   return wordWidths;
@@ -160,6 +164,10 @@ std::vector<size_t> ParsedText::computeLineBreaks(const GfxRenderer& renderer, c
       if (!hyphenateWordAtIndex(i, effectiveWidth, renderer, fontId, wordWidths, /*allowFallbackBreaks=*/true)) {
         break;
       }
+      vTaskDelay(1);
+    }
+    if ((i & 0x3F) == 0x3F) {
+      vTaskDelay(1);
     }
   }
 
@@ -233,6 +241,10 @@ std::vector<size_t> ParsedText::computeLineBreaks(const GfxRenderer& renderer, c
       } else {
         dp[i] = 0;
       }
+    }
+
+    if ((i & 0x0F) == 0) {
+      vTaskDelay(1);
     }
   }
 
@@ -344,6 +356,10 @@ std::vector<size_t> ParsedText::computeHyphenatedLineBreaks(const GfxRenderer& r
 
     lineBreakIndices.push_back(currentIndex);
     isFirstLine = false;
+
+    if ((lineBreakIndices.size() & 0x0F) == 0) {
+      vTaskDelay(1);
+    }
   }
 
   return lineBreakIndices;
@@ -373,7 +389,8 @@ bool ParsedText::hyphenateWordAtIndex(const size_t wordIndex, const int availabl
   bool chosenNeedsHyphen = true;
 
   // Iterate over each legal breakpoint and retain the widest prefix that still fits.
-  for (const auto& info : breakInfos) {
+  for (size_t i = 0; i < breakInfos.size(); ++i) {
+    const auto& info = breakInfos[i];
     const size_t offset = info.byteOffset;
     if (offset == 0 || offset >= word.size()) {
       continue;
@@ -388,6 +405,10 @@ bool ParsedText::hyphenateWordAtIndex(const size_t wordIndex, const int availabl
     chosenWidth = prefixWidth;
     chosenOffset = offset;
     chosenNeedsHyphen = needsHyphen;
+
+    if ((i & 0x0F) == 0x0F) {
+      vTaskDelay(1);
+    }
   }
 
   if (chosenWidth < 0) {

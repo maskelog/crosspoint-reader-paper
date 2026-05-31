@@ -55,7 +55,6 @@ class KeyboardEntryActivity : public Activity {
   void onComplete(std::string text);
   void onCancel();
 
-#if CROSSPOINT_PAPERS3
   // Paper S3: 4-row touch keyboard with tap-to-type
   static constexpr int NUM_ROWS = 4;
   static constexpr int KEYS_PER_ROW = 10;
@@ -74,22 +73,4 @@ class KeyboardEntryActivity : public Activity {
   int touchRowCharCount(int row) const;
   bool handleTouchAt(int16_t x, int16_t y);
   int getKeyboardStartY() const;
-#else
-  // X4: 5-row button-navigated keyboard
-  static constexpr int NUM_ROWS = 5;
-  static constexpr int KEYS_PER_ROW = 13;
-  static const char* const keyboard[NUM_ROWS];
-  static const char* const keyboardShift[NUM_ROWS];
-  static const char* const shiftString[3];
-
-  static constexpr int SPECIAL_ROW = 4;
-  static constexpr int SHIFT_COL = 0;
-  static constexpr int SPACE_COL = 2;
-  static constexpr int BACKSPACE_COL = 7;
-  static constexpr int DONE_COL = 9;
-
-  char getSelectedChar() const;
-  bool handleKeyPress();  // false if onComplete was triggered
-  int getRowLength(int row) const;
-#endif
 };

@@ -69,12 +69,6 @@ EpdFont notosans12ItalicFont(&notosans_12_italic);
 EpdFont notosans12BoldItalicFont(&notosans_12_bolditalic);
 EpdFontFamily notosans12FontFamily(&notosans12RegularFont, &notosans12BoldFont, &notosans12ItalicFont,
                                    &notosans12BoldItalicFont);
-EpdFont notosans14RegularFont(&notosans_14_regular);
-EpdFont notosans14BoldFont(&notosans_14_bold);
-EpdFont notosans14ItalicFont(&notosans_14_italic);
-EpdFont notosans14BoldItalicFont(&notosans_14_bolditalic);
-EpdFontFamily notosans14FontFamily(&notosans14RegularFont, &notosans14BoldFont, &notosans14ItalicFont,
-                                   &notosans14BoldItalicFont);
 EpdFont notosans16RegularFont(&notosans_16_regular);
 EpdFont notosans16BoldFont(&notosans_16_bold);
 EpdFont notosans16ItalicFont(&notosans_16_italic);
@@ -113,6 +107,14 @@ EpdFont opendyslexic14BoldItalicFont(&opendyslexic_14_bolditalic);
 EpdFontFamily opendyslexic14FontFamily(&opendyslexic14RegularFont, &opendyslexic14BoldFont, &opendyslexic14ItalicFont,
                                        &opendyslexic14BoldItalicFont);
 #endif  // OMIT_FONTS
+
+// NotoSans 14 always included: contains Korean/CJK glyphs needed for non-Latin text
+EpdFont notosans14RegularFont(&notosans_14_regular);
+EpdFont notosans14BoldFont(&notosans_14_bold);
+EpdFont notosans14ItalicFont(&notosans_14_italic);
+EpdFont notosans14BoldItalicFont(&notosans_14_bolditalic);
+EpdFontFamily notosans14FontFamily(&notosans14RegularFont, &notosans14BoldFont, &notosans14ItalicFont,
+                                   &notosans14BoldItalicFont);
 
 EpdFont smallFont(&notosans_8_regular);
 EpdFontFamily smallFontFamily(&smallFont);
@@ -209,13 +211,13 @@ void setupDisplayAndFonts() {
   fontCacheManager.setFontDecompressor(&fontDecompressor);
   renderer.setFontCacheManager(&fontCacheManager);
   renderer.insertFont(BOOKERLY_14_FONT_ID, bookerly14FontFamily);
+  renderer.insertFont(NOTOSANS_14_FONT_ID, notosans14FontFamily);
 #ifndef OMIT_FONTS
   renderer.insertFont(BOOKERLY_12_FONT_ID, bookerly12FontFamily);
   renderer.insertFont(BOOKERLY_16_FONT_ID, bookerly16FontFamily);
   renderer.insertFont(BOOKERLY_18_FONT_ID, bookerly18FontFamily);
 
   renderer.insertFont(NOTOSANS_12_FONT_ID, notosans12FontFamily);
-  renderer.insertFont(NOTOSANS_14_FONT_ID, notosans14FontFamily);
   renderer.insertFont(NOTOSANS_16_FONT_ID, notosans16FontFamily);
   renderer.insertFont(NOTOSANS_18_FONT_ID, notosans18FontFamily);
   renderer.insertFont(OPENDYSLEXIC_8_FONT_ID, opendyslexic8FontFamily);
@@ -226,6 +228,7 @@ void setupDisplayAndFonts() {
   renderer.insertFont(UI_10_FONT_ID, ui10FontFamily);
   renderer.insertFont(UI_12_FONT_ID, ui12FontFamily);
   renderer.insertFont(SMALL_FONT_ID, smallFontFamily);
+  renderer.setFallbackFontId(NOTOSANS_14_FONT_ID);
   LOG_DBG("MAIN", "Fonts setup");
 }
 
@@ -267,15 +270,9 @@ void setup() {
 
   switch (gpio.getWakeupReason()) {
     case HalGPIO::WakeupReason::PowerButton:
-#if CROSSPOINT_PAPERS3
       // Paper S3: power button is handled by the PMIC, not a GPIO.
       // BTN_POWER is never set in the touch-only HalGPIO, so skip verification.
       LOG_DBG("MAIN", "Wakeup reason: Power button (PMIC)");
-#else
-      // For normal wakeups, verify power button press duration
-      LOG_DBG("MAIN", "Verifying power button press duration");
-      verifyPowerButtonDuration();
-#endif
       break;
     case HalGPIO::WakeupReason::AfterUSBPower:
       // If USB power caused a cold boot, go back to sleep
@@ -294,10 +291,8 @@ void setup() {
 
   setupDisplayAndFonts();
 
-#if CROSSPOINT_PAPERS3
   // Use the user's refresh frequency setting for periodic full refreshes to clear ghosting
   renderer.setPeriodicFullRefreshInterval(SETTINGS.getRefreshFrequency());
-#endif
 
   activityManager.goToBoot();
 
@@ -321,11 +316,6 @@ void setup() {
     activityManager.goToReader(path);
   }
 
-#if !CROSSPOINT_PAPERS3
-  // Ensure we're not still holding the power button before leaving setup
-  // (Paper S3 has no detectable power button GPIO, so skip this)
-  waitForPowerRelease();
-#endif
 }
 
 void loop() {
@@ -336,9 +326,7 @@ void loop() {
   gpio.update();
 
   renderer.setFadingFix(SETTINGS.fadingFix);
-#if CROSSPOINT_PAPERS3
   renderer.setPeriodicFullRefreshInterval(SETTINGS.getRefreshFrequency());
-#endif
 
   if (Serial && millis() - lastMemPrint >= 10000) {
     LOG_INF("MEM", "Free: %d bytes, Total: %d bytes, Min Free: %d bytes, MaxAlloc: %d bytes", ESP.getFreeHeap(),
@@ -399,18 +387,6 @@ void loop() {
     return;
   }
 
-#if !CROSSPOINT_PAPERS3
-  // Paper S3 has no detectable power button GPIO; sleep is only via auto-sleep timeout
-  if (gpio.isPressed(HalGPIO::BTN_POWER) && gpio.getHeldTime() > SETTINGS.getPowerButtonDuration()) {
-    // If the screenshot combination is potentially being pressed, don't sleep
-    if (gpio.isPressed(HalGPIO::BTN_DOWN)) {
-      return;
-    }
-    enterDeepSleep();
-    // This should never be hit as `enterDeepSleep` calls esp_deep_sleep_start
-    return;
-  }
-#endif
 
   const unsigned long activityStartTime = millis();
   activityManager.loop();
@@ -431,19 +407,8 @@ void loop() {
     powerManager.setPowerSaving(false);  // Make sure we're at full performance when skipLoopDelay is requested
     yield();                             // Give FreeRTOS a chance to run tasks, but return immediately
   } else {
-#if CROSSPOINT_PAPERS3
     // PaperS3: minimal delay for fast touch response (~500Hz polling).
     // Power management is handled by the PMIC, not CPU throttling.
     delay(2);
-#else
-    if (millis() - lastActivityTime >= HalPowerManager::IDLE_POWER_SAVING_MS) {
-      // If we've been inactive for a while, increase the delay to save power
-      powerManager.setPowerSaving(true);  // Lower CPU frequency after extended inactivity
-      delay(50);
-    } else {
-      // Short delay to prevent tight loop while still being responsive
-      delay(10);
-    }
-#endif
   }
 }

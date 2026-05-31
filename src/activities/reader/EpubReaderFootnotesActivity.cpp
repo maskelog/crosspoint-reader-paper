@@ -79,11 +79,7 @@ void EpubReaderFootnotesActivity::render(RenderLock&&) {
     return;
   }
 
-#if CROSSPOINT_PAPERS3
   constexpr int lineHeight = 75;
-#else
-  constexpr int lineHeight = 36;
-#endif
   const int screenWidth = renderer.getScreenWidth();
   const int marginLeft = contentX + 20;
   const int textLineH = renderer.getLineHeight(UI_10_FONT_ID);

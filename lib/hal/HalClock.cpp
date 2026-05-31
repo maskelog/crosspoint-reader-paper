@@ -6,15 +6,13 @@
 #include <esp_sntp.h>
 #include <time.h>
 
+#include <M5Unified.h>
+
 HalClock halClock;  // Singleton instance
 
-// BM8563 (PCF8563-compatible) lives on M5PaperS3's I2C1, the same physical bus
-// as the GT911 touch controller (SDA=GPIO41, SCL=GPIO42). The lgfx GT911
-// driver installs the ESP-IDF I2C master on port 1 during HalTouch::begin;
-// we re-bind Wire1 to the same pins here so Arduino-level I2C transactions
-// can talk to the RTC without disturbing touch.
 namespace {
 constexpr uint8_t BM8563_ADDR = 0x51;
+// S3: BM8563 on I2C1 (shared bus with GT911 touch)
 constexpr int BM8563_SDA_PIN = 41;
 constexpr int BM8563_SCL_PIN = 42;
 constexpr uint32_t BM8563_FREQ = 400000;
@@ -32,31 +30,18 @@ uint8_t decToBcd(uint8_t d) { return ((d / 10) << 4) | (d % 10); }
 }  // namespace
 
 void HalClock::begin() {
-  // Arduino-ESP32 v3.x's TwoWire::begin() is idempotent — if lgfx has already
-  // configured the underlying ESP-IDF I2C driver on port 1, this call binds
-  // Wire1 to it without reinstalling.
-  Wire1.begin(BM8563_SDA_PIN, BM8563_SCL_PIN, BM8563_FREQ);
-
-  Wire1.beginTransmission(BM8563_ADDR);
-  Wire1.write(REG_SECONDS);
-  if (Wire1.endTransmission(false) != 0) {
-    _available = false;
-    LOG_INF("CLK", "BM8563 RTC not detected on I2C1 (addr 0x51)");
-    return;
+  // M5.begin() (called in HalGPIO::begin) already initialises M5.Rtc (BM8563).
+  // Probe by attempting a time read.
+  m5::rtc_time_t t;
+  _available = M5.Rtc.getTime(&t);
+  if (_available) {
+    LOG_INF("CLK", "BM8563 RTC available via M5.Rtc");
+    uint8_t h, m2;
+    getTime(h, m2);
+  } else {
+    LOG_INF("CLK", "BM8563 RTC not available");
   }
-  if (Wire1.requestFrom(BM8563_ADDR, static_cast<uint8_t>(1)) < 1) {
-    _available = false;
-    return;
-  }
-  Wire1.read();  // discard — only probing connectivity
 
-  _available = true;
-  LOG_INF("CLK", "BM8563 RTC detected");
-
-  // Prime the cache with an initial read so the first status-bar render after
-  // boot has a value, not a 00:00 placeholder.
-  uint8_t h, m;
-  getTime(h, m);
 }
 
 bool HalClock::getTime(uint8_t& hour, uint8_t& minute) const {
@@ -69,36 +54,16 @@ bool HalClock::getTime(uint8_t& hour, uint8_t& minute) const {
     return true;
   }
 
-  Wire1.beginTransmission(BM8563_ADDR);
-  Wire1.write(REG_SECONDS);
-  if (Wire1.endTransmission(false) != 0) {
-    if (_hasCachedTime) {
-      hour = _cachedHour;
-      minute = _cachedMinute;
-      _lastPollMs = now;
-      return true;
-    }
+  m5::rtc_time_t t;
+  if (!M5.Rtc.getTime(&t)) {
+    if (_hasCachedTime) { hour = _cachedHour; minute = _cachedMinute; return true; }
     return false;
   }
-  if (Wire1.requestFrom(BM8563_ADDR, static_cast<uint8_t>(3)) < 3) {
-    if (_hasCachedTime) {
-      hour = _cachedHour;
-      minute = _cachedMinute;
-      _lastPollMs = now;
-      return true;
-    }
-    return false;
-  }
+  _cachedHour   = (uint8_t)t.hours;
+  _cachedMinute = (uint8_t)t.minutes;
 
-  (void)Wire1.read();  // 0x02 seconds — discard
-  const uint8_t rawMin = Wire1.read();
-  const uint8_t rawHour = Wire1.read();
-
-  _cachedMinute = bcdToDec(rawMin & 0x7F);
-  _cachedHour = bcdToDec(rawHour & 0x3F);  // mask reserved bits 7-6
   _hasCachedTime = true;
   _lastPollMs = now;
-
   hour = _cachedHour;
   minute = _cachedMinute;
   return true;
@@ -133,21 +98,23 @@ bool HalClock::formatTime(char* buf, size_t bufSize, uint8_t utcOffsetQuarterHou
 bool HalClock::writeTimeToRTC(uint8_t hour, uint8_t minute, uint8_t second) {
   if (!_available) return false;
 
-  Wire1.beginTransmission(BM8563_ADDR);
-  Wire1.write(REG_SECONDS);
-  Wire1.write(decToBcd(second));  // 0x02 — VL bit cleared by writing
-  Wire1.write(decToBcd(minute));  // 0x03
-  Wire1.write(decToBcd(hour));    // 0x04 — 24-hour mode (bit 6 = 0)
-  if (Wire1.endTransmission() != 0) {
-    LOG_ERR("CLK", "Failed to write time to BM8563");
-    return false;
-  }
+  bool ok = false;
 
-  _cachedHour = hour;
-  _cachedMinute = minute;
-  _hasCachedTime = true;
-  _lastPollMs = millis();
-  return true;
+  m5::rtc_time_t t;
+  t.hours   = (int8_t)hour;
+  t.minutes = (int8_t)minute;
+  t.seconds = (int8_t)second;
+  M5.Rtc.setTime(&t);  // returns void in M5Unified 0.2.x
+  ok = true;
+
+
+  if (ok) {
+    _cachedHour = hour;
+    _cachedMinute = minute;
+    _hasCachedTime = true;
+    _lastPollMs = millis();
+  }
+  return ok;
 }
 
 bool HalClock::syncFromNTP() {

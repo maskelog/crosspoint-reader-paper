@@ -105,11 +105,9 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
 
   recentsLoaded = true;
   recentsLoading = false;
-#if CROSSPOINT_PAPERS3
   if (showingLoading) {
     renderer.requestFullRefresh();
   }
-#endif
 }
 
 void HomeActivity::onEnter() {
@@ -258,8 +256,9 @@ void HomeActivity::render(RenderLock&&) {
     firstRenderDone = true;
     requestUpdate();
   } else if (!recentsLoaded && !recentsLoading) {
-    recentsLoading = true;
-    loadRecentCovers(metrics.homeCoverHeight);
+    // Avoid doing EPUB cover extraction/conversion inside the Home render task.
+    // On slow SD cards or large covers this can starve IDLE0 and cause a boot loop.
+    recentsLoaded = true;
   }
 }
 

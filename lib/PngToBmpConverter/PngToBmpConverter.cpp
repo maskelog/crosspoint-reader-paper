@@ -16,13 +16,8 @@ constexpr bool USE_8BIT_OUTPUT = false;
 constexpr bool USE_ATKINSON = true;
 constexpr bool USE_FLOYD_STEINBERG = false;
 constexpr bool USE_PRESCALE = true;
-#if CROSSPOINT_PAPERS3
 constexpr int TARGET_MAX_WIDTH = 540;   // Paper S3 portrait width
 constexpr int TARGET_MAX_HEIGHT = 960;  // Paper S3 portrait height
-#else
-constexpr int TARGET_MAX_WIDTH = 480;
-constexpr int TARGET_MAX_HEIGHT = 800;
-#endif
 // ============================================================================
 
 // BMP writing helpers (same as JpegToBmpConverter)

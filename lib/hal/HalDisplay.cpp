@@ -1,22 +1,17 @@
-#include <EPD_Painter.h>
-#include <EPD_Painter_presets.h>
 #include <HalDisplay.h>
 
 #include <cstring>
 
-HalDisplay::HalDisplay() : frameBuffer(nullptr) {}
+HalDisplay::HalDisplay() {}
 
 HalDisplay::~HalDisplay() {
   freeGrayscaleBuffers();
-  if (epd) {
-    epd->end();
-    delete epd;
-    epd = nullptr;
+  if (sprite) {
+    sprite->deleteSprite();
+    delete sprite;
+    sprite = nullptr;
   }
-  if (frameBuffer) {
-    heap_caps_free(frameBuffer);
-    frameBuffer = nullptr;
-  }
+  frameBuffer = nullptr;
 }
 
 void HalDisplay::freeGrayscaleBuffers() {
@@ -31,42 +26,51 @@ void HalDisplay::freeGrayscaleBuffers() {
 }
 
 void HalDisplay::begin() {
-  // Allocate 8bpp framebuffer in PSRAM — EPD_Painter native format
-  frameBuffer = static_cast<uint8_t*>(heap_caps_malloc(BUFFER_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-  if (!frameBuffer) {
-    frameBuffer = static_cast<uint8_t*>(malloc(BUFFER_SIZE));
-  }
+  // M5.begin() is already called by HalGPIO::begin(). Just configure the display.
+  // Physical panel is 960x540 at the chip level, but the M5Paper chassis is portrait.
+  // setRotation(3) gives 540x960 logical portrait with the correct top-left corner.
+  M5.Display.setRotation(1);
+
+  // 8bpp palette sprite: GfxRenderer writes EPD values (0=white, 3=black) as
+  // palette indices. pushSprite() converts palette RGB565 entries to EPD gray.
+  sprite = new LGFX_Sprite(&M5.Display);
+  sprite->setPsram(true);
+  sprite->setColorDepth(8);
+  sprite->createSprite(DISPLAY_WIDTH, DISPLAY_HEIGHT);
+
+  sprite->createPalette();
+  // 4-level grayscale palette: GfxRenderer writes 0/1/2/3 as palette indices,
+  // pushSprite converts each index to the configured RGB565 then to EPD gray.
+  sprite->setPaletteColor(0, lgfx::color565(255, 255, 255));  // 0 = white
+  sprite->setPaletteColor(1, lgfx::color565(170, 170, 170));  // 1 = light gray
+  sprite->setPaletteColor(2, lgfx::color565(85,  85,  85));   // 2 = dark gray
+  sprite->setPaletteColor(3, lgfx::color565(0,   0,   0));    // 3 = black
+  // Remaining palette entries (4-255) default to black; unused by GfxRenderer.
+
+  // frameBuffer points directly into the sprite's internal pixel buffer.
+  frameBuffer = static_cast<uint8_t*>(sprite->getBuffer());
   if (frameBuffer) {
-    memset(frameBuffer, 0, BUFFER_SIZE);  // 0 = white in EPD_Painter
+    memset(frameBuffer, 0, BUFFER_SIZE);  // fill with palette index 0 = white
   }
 
-  EPD_Painter::Config epdConfig = EPD_PAINTER_PRESET;
-  epdConfig.rotation = EPD_Painter::Rotation::ROTATION_0;
-  epdConfig.quality = EPD_Painter::Quality::QUALITY_NORMAL;
-  epdConfig.i2c.scl = -1;
-  epdConfig.i2c.sda = -1;
+  // Initial full-quality clear to sync the EPD panel state.
+  M5.Display.setEpdMode(epd_mode_t::epd_quality);
+  sprite->pushSprite(0, 0);
+  M5.Display.setEpdMode(epd_mode_t::epd_fast);
 
-  epd = new EPD_Painter(epdConfig);
-  bool ok = epd->begin();
-
-  // Full white paint on boot to physically clear the sleep cover and sync
-  // EPD_Painter's internal state with the panel. clear() resets the internal
-  // buffer, then paint() drives the e-ink particles to white.
-  if (ok && frameBuffer) {
-    epd->clear();
-    epd->setQuality(EPD_Painter::Quality::QUALITY_HIGH);
-    epd->paint(frameBuffer);  // frameBuffer is all-zero (white) from memset above
+  if (Serial) {
+    Serial.printf("[%lu] HalDisplay: begin() M5Paper - sprite %s\n", millis(), frameBuffer ? "OK" : "FAIL");
+    Serial.printf("[%lu] Display logical: %dx%d, DISPLAY_WIDTH/HEIGHT: %dx%d, sprite: %dx%d\n",
+                  millis(), M5.Display.width(), M5.Display.height(),
+                  (int)DISPLAY_WIDTH, (int)DISPLAY_HEIGHT,
+                  sprite->width(), sprite->height());
   }
-
-  if (Serial)
-    Serial.printf("[%lu] HalDisplay: begin() - framebuffer %s, EPD_Painter %s\n", millis(), frameBuffer ? "OK" : "FAIL",
-                  ok ? "OK" : "FAIL");
 }
 
 void HalDisplay::clearScreen(uint8_t color) const {
   if (!frameBuffer) return;
-  // Map old 1-bit convention to 8bpp EPD_Painter values:
-  // 0xFF (old white) → 0 (EPD white), 0x00 (old black) → 3 (EPD black)
+  // Map old 1-bit convention to 8bpp palette index:
+  // 0xFF (old white) → 0 (palette white), 0x00 (old black) → 3 (palette black)
   uint8_t epdColor = (color == 0xFF) ? 0 : 3;
   memset(frameBuffer, epdColor, BUFFER_SIZE);
 }
@@ -129,35 +133,37 @@ void HalDisplay::drawImageTransparent(const uint8_t* imageData, uint16_t x, uint
 }
 
 void HalDisplay::displayBuffer(RefreshMode mode, bool turnOffScreen) {
-  if (!epd || !frameBuffer) return;
+  if (!sprite || !frameBuffer) return;
 
   switch (mode) {
     case FULL_REFRESH:
-      // Full clear + repaint — eliminates all ghosting
-      epd->clear();
-      epd->setQuality(EPD_Painter::Quality::QUALITY_HIGH);
+      M5.Display.setEpdMode(epd_mode_t::epd_quality);
+      sprite->pushSprite(0, 0);
+      M5.Display.setEpdMode(epd_mode_t::epd_fast);
       break;
     case HALF_REFRESH:
+      M5.Display.setEpdMode(epd_mode_t::epd_text);
+      sprite->pushSprite(0, 0);
+      M5.Display.setEpdMode(epd_mode_t::epd_fast);
+      break;
     case FAST_REFRESH:
     default:
-      // Use QUALITY_HIGH for all modes — QUALITY_NORMAL leaves ghost traces
-      // on e-paper because it doesn't fully drive the ink particles.
-      epd->setQuality(EPD_Painter::Quality::QUALITY_HIGH);
+      // epd_text supports 4 gray levels — required for anti-aliased glyphs
+      // written as palette values 1 (light gray) and 2 (dark gray). epd_fast
+      // (A2 binary) would drop those to white and the page would look blank.
+      M5.Display.setEpdMode(epd_mode_t::epd_text);
+      sprite->pushSprite(0, 0);
       break;
   }
-
-  epd->paint(frameBuffer);
 }
 
 void HalDisplay::refreshDisplay(RefreshMode mode, bool turnOffScreen) {
-  // With EPD_Painter, refresh = repaint the current buffer
   displayBuffer(mode, turnOffScreen);
 }
 
 void HalDisplay::deepSleep() {
-  if (epd) {
-    epd->end();
-  }
+  // HalPowerManager::startDeepSleep() handles the actual sleep call.
+  // Nothing to tear down here — M5.Power.deepSleep() is called there.
 }
 
 uint8_t* HalDisplay::getFrameBuffer() const { return frameBuffer; }
@@ -185,18 +191,15 @@ void HalDisplay::copyGrayscaleMsbBuffers(const uint8_t* msbBuffer) {
 }
 
 void HalDisplay::cleanupGrayscaleBuffers(const uint8_t* bwBuffer) {
-  // No cleanup needed — EPD_Painter uses delta updates so we don't need
+  // No cleanup needed — M5GFX handles delta updates internally so we don't need
   // to push the BW buffer back to "reset" the display state
 }
 
 void HalDisplay::displayGrayBuffer(bool turnOffScreen) {
-  if (!grayLsbBuffer || !grayMsbBuffer || !epd || !frameBuffer) return;
+  if (!grayLsbBuffer || !grayMsbBuffer || !frameBuffer) return;
 
   // Combine two 8bpp gray planes into 4-level grayscale.
-  // Each buffer has values 0 (white/unmarked) or 3 (black/marked).
-  // Map to old bit convention: 0→bit1(white), 3→bit0(black)
-  // then combine: gray = (msb_bit << 1) | lsb_bit → 0=black..3=white
-  // EPD_Painter: 0=white..3=black, so epd_value = 3 - gray
+  // EPD values written to frameBuffer: 0=white, 1=lgray, 2=dgray, 3=black
   for (uint32_t i = 0; i < BUFFER_SIZE; i++) {
     uint8_t lsb_bit = (grayLsbBuffer[i] == 0) ? 1 : 0;
     uint8_t msb_bit = (grayMsbBuffer[i] == 0) ? 1 : 0;
@@ -204,7 +207,11 @@ void HalDisplay::displayGrayBuffer(bool turnOffScreen) {
     frameBuffer[i] = 3 - gray;
   }
 
-  epd->setQuality(EPD_Painter::Quality::QUALITY_NORMAL);
-  epd->paint(frameBuffer);
+  if (!sprite) { freeGrayscaleBuffers(); return; }
+  // GC16 waveform supports 16 gray levels — best for anti-aliased text rendering.
+  M5.Display.setEpdMode(epd_mode_t::epd_quality);
+  sprite->pushSprite(0, 0);
+  M5.Display.setEpdMode(epd_mode_t::epd_fast);
+
   freeGrayscaleBuffers();
 }

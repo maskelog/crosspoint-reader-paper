@@ -23,6 +23,12 @@ class FontDecompressor {
   // Free all cached data (page buffer + hot group).
   void clearCache();
 
+  // Free only the per-page prewarm buffer. The hot group (used by the CJK
+  // fallback path) is preserved so the next page can reuse it — freeing and
+  // reallocating a 2MB hot group every page fragments PSRAM and eventually
+  // fails on devices with limited contiguous PSRAM (e.g. M5Paper).
+  void clearPageCacheOnly();
+
   // Pre-scan UTF-8 text and extract needed glyph bitmaps into a flat page buffer.
   // Each group is decompressed once into a temp buffer; only needed glyphs are kept.
   // Returns the number of glyphs that couldn't be loaded (0 on full success).

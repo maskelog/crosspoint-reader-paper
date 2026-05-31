@@ -635,8 +635,7 @@ bool Epub::generateThumbBmp(int height) const {
     int THUMB_TARGET_WIDTH = height * 0.6;
     int THUMB_TARGET_HEIGHT = height;
 
-#if CROSSPOINT_PAPERS3
-    // Fast path: load JPEG to PSRAM, decode with JPEGDEC at 1/8 scale (skips temp file + streaming path)
+    // Fast path: load JPEG to PSRAM, decode with JPEGDEC at reduced scale (skips temp file + streaming path)
     {
       const std::string normPath = FsHelpers::normalisePath(coverImageHref);
       size_t jpegSize = 0;
@@ -662,7 +661,6 @@ bool Epub::generateThumbBmp(int height) const {
         LOG_ERR("EBP", "Failed to load cover JPEG to RAM, falling back to streaming path");
       }
     }
-#endif
 
     const auto coverJpgTempPath = getCachePath() + "/.cover.jpg";
 

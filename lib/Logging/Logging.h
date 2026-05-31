@@ -27,7 +27,11 @@ won't trigger deprecation warnings.
 #define LOG_LEVEL 0
 #endif
 
+#ifdef CROSSPOINT_M5PAPER
+static HardwareSerial& logSerial = Serial;
+#else
 static HWCDC& logSerial = Serial;
+#endif
 
 void logPrintf(const char* level, const char* origin, const char* format, ...);
 

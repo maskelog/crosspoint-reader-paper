@@ -6,6 +6,7 @@
 #include <HalPowerManager.h>
 #include <HalStorage.h>
 #include <Logging.h>
+#include <Utf8.h>
 
 #include <cstdint>
 #include <string>
@@ -18,9 +19,95 @@
 // Internal constants
 namespace {
 constexpr int batteryPercentSpacing = BaseTheme::batteryPercentSpacing;
+constexpr int statusBarTitleFontId = NOTOSANS_14_FONT_ID;
+constexpr char statusBarCjkFontPath[] = "/fonts/SourceHanSansCN-Bold_20_20x20.bin";
+constexpr int statusBarCjkFontWidth = 20;
+constexpr int statusBarCjkFontHeight = 20;
+constexpr int statusBarCjkFontRowBytes = (statusBarCjkFontWidth + 7) / 8;
+constexpr int statusBarCjkFontGlyphBytes = statusBarCjkFontRowBytes * statusBarCjkFontHeight;
+constexpr uint32_t statusBarCjkFontGlyphCount = 65534;
 constexpr int homeMenuMargin = 20;
 constexpr int homeMarginTop = 30;
 constexpr int subtitleY = 738;
+
+int measureFixedCjkText(const char* text) {
+  if (!text) return 0;
+  int count = 0;
+  const auto* ptr = reinterpret_cast<const unsigned char*>(text);
+  while (utf8NextCodepoint(&ptr) != 0) {
+    count++;
+  }
+  return count * statusBarCjkFontWidth;
+}
+
+std::string truncateFixedCjkText(const char* text, const int maxWidth) {
+  if (!text || maxWidth <= 0) return {};
+  const int maxChars = maxWidth / statusBarCjkFontWidth;
+  if (maxChars <= 0) return {};
+
+  const char* start = text;
+  const auto* ptr = reinterpret_cast<const unsigned char*>(text);
+  int count = 0;
+  while (count < maxChars) {
+    if (utf8NextCodepoint(&ptr) == 0) {
+      return text;
+    }
+    start = reinterpret_cast<const char*>(ptr);
+    count++;
+  }
+
+  return std::string(text, start - text);
+}
+
+bool drawFixedCjkText(GfxRenderer& renderer, const int x, const int y, const char* text) {
+  if (!text || *text == '\0') return true;
+
+  FsFile fontFile;
+  if (!Storage.openFileForRead("THEME", statusBarCjkFontPath, fontFile)) {
+    return false;
+  }
+
+  uint8_t glyph[statusBarCjkFontGlyphBytes];
+  int cursorX = x;
+  const auto* ptr = reinterpret_cast<const unsigned char*>(text);
+  while (true) {
+    const uint32_t cp = utf8NextCodepoint(&ptr);
+    if (cp == 0) break;
+
+    if (cp >= statusBarCjkFontGlyphCount ||
+        !fontFile.seek(static_cast<size_t>(cp) * statusBarCjkFontGlyphBytes) ||
+        fontFile.read(glyph, sizeof(glyph)) != static_cast<int>(sizeof(glyph))) {
+      fontFile.close();
+      return false;
+    }
+
+    bool hasPixels = false;
+    for (uint8_t b : glyph) {
+      if (b != 0) {
+        hasPixels = true;
+        break;
+      }
+    }
+    if (!hasPixels) {
+      fontFile.close();
+      return false;
+    }
+
+    for (int row = 0; row < statusBarCjkFontHeight; row++) {
+      const uint8_t* rowData = glyph + row * statusBarCjkFontRowBytes;
+      for (int col = 0; col < statusBarCjkFontWidth; col++) {
+        if ((rowData[col >> 3] & (0x80 >> (col & 0x07))) != 0) {
+          renderer.drawPixel(cursorX + col, y + row, true);
+        }
+      }
+    }
+
+    cursorX += statusBarCjkFontWidth;
+  }
+
+  fontFile.close();
+  return true;
+}
 
 // Helper: draw battery icon at given position
 void drawBatteryIcon(const GfxRenderer& renderer, int x, int y, int battWidth, int rectHeight, uint16_t percentage) {
@@ -131,8 +218,10 @@ void BaseTheme::drawButtonHints(GfxRenderer& renderer, const char* btn1, const c
   renderer.setOrientation(GfxRenderer::Orientation::Portrait);
 
   const int pageHeight = renderer.getScreenHeight();
-#if CROSSPOINT_PAPERS3
-  // Paper S3: 4 tappable buttons across 540px, matching footer touch zones in HalGPIO
+  // 540px portrait: 4 tappable buttons aligned with HalGPIO footer quarters
+  // (touch zones split at 135/270/405). M5Paper uses the same layout — the
+  // X3/X4 480px positions below clustered the buttons left of the zones, so
+  // tapping the rightmost button hit the UP zone instead of DOWN.
   constexpr int buttonWidth = 120;
   constexpr int buttonHeight = BaseMetrics::values.buttonHintsHeight;
   constexpr int buttonY = BaseMetrics::values.buttonHintsHeight;
@@ -150,34 +239,13 @@ void BaseTheme::drawButtonHints(GfxRenderer& renderer, const char* btn1, const c
       renderer.drawText(UI_10_FONT_ID, textX, textY, labels[i]);
     }
   }
-#else
-  constexpr int buttonWidth = 106;
-  constexpr int buttonHeight = BaseMetrics::values.buttonHintsHeight;
-  constexpr int buttonY = BaseMetrics::values.buttonHintsHeight;  // Distance from bottom
-  constexpr int textYOffset = 7;                                  // Distance from top of button to text baseline
-  constexpr int buttonPositions[] = {25, 130, 245, 350};
-  const char* labels[] = {btn1, btn2, btn3, btn4};
-
-  for (int i = 0; i < 4; i++) {
-    // Only draw if the label is non-empty
-    if (labels[i] != nullptr && labels[i][0] != '\0') {
-      const int x = buttonPositions[i];
-      renderer.fillRect(x, pageHeight - buttonY, buttonWidth, buttonHeight, false);
-      renderer.drawRect(x, pageHeight - buttonY, buttonWidth, buttonHeight);
-      const int textWidth = renderer.getTextWidth(UI_10_FONT_ID, labels[i]);
-      const int textX = x + (buttonWidth - 1 - textWidth) / 2;
-      renderer.drawText(UI_10_FONT_ID, textX, pageHeight - buttonY + textYOffset, labels[i]);
-    }
-  }
-#endif
 
   renderer.setOrientation(orig_orientation);
 }
 
 void BaseTheme::drawSideButtonHints(const GfxRenderer& renderer, const char* topBtn, const char* bottomBtn) const {
-#if CROSSPOINT_PAPERS3
+  // No physical side buttons on Paper S3 or M5Paper — touch-only / power-only.
   return;
-#endif
   const int screenWidth = renderer.getScreenWidth();
   constexpr int buttonWidth = BaseMetrics::values.sideButtonHintsWidth;  // Width on screen (height when rotated)
   constexpr int buttonHeight = 80;                                       // Height on screen (width when rotated)
@@ -413,19 +481,8 @@ void BaseTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std:
 
         // Calculate width based on aspect ratio, maintaining baseHeight
         if (imgWidth > 0 && imgHeight > 0) {
-#if CROSSPOINT_PAPERS3
           // Fit mode: cover fills the full screen width (540px)
           bookWidth = rect.width;
-#else
-          const float aspectRatio = static_cast<float>(imgWidth) / static_cast<float>(imgHeight);
-          bookWidth = static_cast<int>(baseHeight * aspectRatio);
-
-          // Ensure width doesn't exceed reasonable limits (max 90% of screen width)
-          const int maxWidth = static_cast<int>(rect.width * 0.9f);
-          if (bookWidth > maxWidth) {
-            bookWidth = maxWidth;
-          }
-#endif
         } else {
           bookWidth = rect.width / 2;  // Fallback
         }
@@ -770,22 +827,31 @@ void BaseTheme::drawStatusBar(GfxRenderer& renderer, const float bookProgress, c
     int titleMarginLeftAdjusted = std::max(titleMarginLeft, titleMarginRight);
     int availableTitleSpace = rendererableScreenWidth - 2 * titleMarginLeftAdjusted;
 
-    int titleWidth;
-    titleWidth = renderer.getTextWidth(SMALL_FONT_ID, title.c_str());
+    const bool useCjkStatusFont = Storage.exists(statusBarCjkFontPath);
+    int titleWidth =
+        useCjkStatusFont ? measureFixedCjkText(title.c_str()) : renderer.getTextWidth(statusBarTitleFontId, title.c_str());
     if (titleWidth > availableTitleSpace) {
       // Not enough space to center on the screen, center it within the remaining space instead
       availableTitleSpace = rendererableScreenWidth - titleMarginLeft - titleMarginRight;
       titleMarginLeftAdjusted = titleMarginLeft;
     }
     if (titleWidth > availableTitleSpace) {
-      title = renderer.truncatedText(SMALL_FONT_ID, title.c_str(), availableTitleSpace);
-      titleWidth = renderer.getTextWidth(SMALL_FONT_ID, title.c_str());
+      if (useCjkStatusFont) {
+        title = truncateFixedCjkText(title.c_str(), availableTitleSpace);
+        titleWidth = measureFixedCjkText(title.c_str());
+      } else {
+        title = renderer.truncatedText(statusBarTitleFontId, title.c_str(), availableTitleSpace);
+        titleWidth = renderer.getTextWidth(statusBarTitleFontId, title.c_str());
+      }
     }
 
-    renderer.drawText(SMALL_FONT_ID,
-                      titleMarginLeftAdjusted + metrics.statusBarHorizontalMargin + orientedMarginLeft +
-                          (availableTitleSpace - titleWidth) / 2,
-                      textY, title.c_str());
+    const int titleX = titleMarginLeftAdjusted + metrics.statusBarHorizontalMargin + orientedMarginLeft +
+                       (availableTitleSpace - titleWidth) / 2;
+    if (useCjkStatusFont) {
+      drawFixedCjkText(renderer, titleX, textY, title.c_str());
+    } else {
+      renderer.drawText(statusBarTitleFontId, titleX, textY, title.c_str());
+    }
   }
 }
 

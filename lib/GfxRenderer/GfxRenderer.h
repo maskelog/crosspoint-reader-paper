@@ -44,9 +44,13 @@ class GfxRenderer {
   // recording to the (non-const) FontCacheManager. Same pragmatic compromise
   // as before, concentrated in a single pointer instead of four fields.
   mutable FontCacheManager* fontCacheManager_ = nullptr;
+  int fallbackFontId_ = -1;
 
   void renderChar(const EpdFontFamily& fontFamily, uint32_t cp, int* x, int* y, bool pixelState,
                   EpdFontFamily::Style style) const;
+  // Returns the EpdFontFamily to use for rendering cp: falls back to fallbackFontId_ when primary lacks the codepoint.
+  const EpdFontFamily* resolveFontFamily(const EpdFontFamily& primary, uint32_t cp,
+                                         EpdFontFamily::Style style) const;
   template <Color color>
   void drawPixelDither(int x, int y) const;
   template <Color color>
@@ -62,22 +66,16 @@ class GfxRenderer {
     }
   }
 
-#if CROSSPOINT_PAPERS3
   static constexpr int VIEWABLE_MARGIN_TOP = 9;
   static constexpr int VIEWABLE_MARGIN_RIGHT = 3;
   static constexpr int VIEWABLE_MARGIN_BOTTOM = 18;
   static constexpr int VIEWABLE_MARGIN_LEFT = 3;
-#else
-  static constexpr int VIEWABLE_MARGIN_TOP = 9;
-  static constexpr int VIEWABLE_MARGIN_RIGHT = 3;
-  static constexpr int VIEWABLE_MARGIN_BOTTOM = 3;
-  static constexpr int VIEWABLE_MARGIN_LEFT = 3;
-#endif
 
   // Setup
   void begin();  // must be called right after display.begin()
   void insertFont(int fontId, EpdFontFamily font);
   void setFontCacheManager(FontCacheManager* m) { fontCacheManager_ = m; }
+  void setFallbackFontId(int id) { fallbackFontId_ = id; }
   FontCacheManager* getFontCacheManager() const { return fontCacheManager_; }
   const std::map<int, EpdFontFamily>& getFontMap() const { return fontMap; }
 

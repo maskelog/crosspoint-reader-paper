@@ -7,6 +7,7 @@
 #include <Utf8.h>
 #include <XmlParserUtils.h>
 #include <expat.h>
+#include <freertos/task.h>
 
 #include "../../Epub.h"
 #include "../Page.h"
@@ -802,6 +803,10 @@ void XMLCALL ChapterHtmlSlimParser::characterData(void* userData, const XML_Char
     }
 
     self->partWordBuffer[self->partWordBufferIndex++] = s[i];
+
+    if ((i & 0xFF) == 0xFF) {
+      vTaskDelay(1);
+    }
   }
 
   // If we have > 750 words buffered up, perform the layout and consume out all but the last line
@@ -1025,6 +1030,7 @@ bool ChapterHtmlSlimParser::parseAndBuildPages() {
       file.close();
       return false;
     }
+    vTaskDelay(1);
   } while (!done);
   LOG_DBG("EHP", "Time to parse and build pages: %lu ms", millis() - chapterStartTime);
 
@@ -1075,6 +1081,9 @@ void ChapterHtmlSlimParser::addLineToPage(std::shared_ptr<TextBlock> line) {
   const int16_t xOffset = line->getBlockStyle().leftInset();
   currentPage->elements.push_back(std::make_shared<PageLine>(line, xOffset, currentPageNextY));
   currentPageNextY += lineHeight;
+  if ((currentPage->elements.size() & 0x0F) == 0) {
+    vTaskDelay(1);
+  }
 }
 
 void ChapterHtmlSlimParser::makePages() {

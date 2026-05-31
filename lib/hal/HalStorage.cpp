@@ -8,12 +8,8 @@
 #include <cassert>
 
 namespace {
-constexpr uint8_t SD_CS_PIN = PAPERS3_SD_CS;
-#if CROSSPOINT_PAPERS3
-constexpr uint32_t SPI_FREQ = 40000000;  // 40MHz — ESP32-S3 SPI supports higher clocks
-#else
-constexpr uint32_t SPI_FREQ = 25000000;  // 25MHz for X4 SD card
-#endif
+constexpr uint8_t SD_CS_PIN = M5PAPER_SD_CS;        // GPIO4
+constexpr uint32_t SPI_FREQ = 25000000;             // 25MHz — ESP32 SPI safe maximum
 SdFat sd;
 bool sdInitialized = false;
 }  // namespace
@@ -320,6 +316,7 @@ size_t HalFile::position() const { HAL_FILE_WRAPPED_CALL(position, ); }
 int HalFile::read(void* buf, size_t count) { HAL_FILE_WRAPPED_CALL(read, buf, count); }
 int HalFile::read() { HAL_FILE_WRAPPED_CALL(read, ); }
 size_t HalFile::write(const void* buf, size_t count) { HAL_FILE_WRAPPED_CALL(write, buf, count); }
+size_t HalFile::write(const uint8_t* buf, size_t count) { HAL_FILE_WRAPPED_CALL(write, buf, count); }
 size_t HalFile::write(uint8_t b) { HAL_FILE_WRAPPED_CALL(write, b); }
 bool HalFile::rename(const char* newPath) { HAL_FILE_WRAPPED_CALL(rename, newPath); }
 bool HalFile::isDirectory() const { HAL_FILE_FORWARD_CALL(isDirectory, ); }  // already thread-safe, no need to wrap

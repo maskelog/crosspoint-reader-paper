@@ -14,9 +14,12 @@
 #include "MappedInputManager.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "util/ButtonNavigator.h"
 
 namespace {
 constexpr unsigned long GO_HOME_MS = 1000;
+constexpr unsigned long NAV_REPEAT_START_MS = 300;
+constexpr unsigned long NAV_REPEAT_INTERVAL_MS = 350;
 }  // namespace
 
 void sortFileList(std::vector<std::string>& strs) {
@@ -141,6 +144,23 @@ void FileBrowserActivity::clearFileMetadata(const std::string& fullPath) {
   }
 }
 
+void FileBrowserActivity::navigateToDirectory(const std::string& entry) {
+  if (basepath.back() != '/') basepath += "/";
+  basepath += entry.substr(0, entry.length() - 1);
+  loadFiles();
+  selectorIndex = 0;
+  ignoreConfirmRelease = true;
+  requestUpdate();
+}
+
+void FileBrowserActivity::moveSelection(int nextIndex) {
+  if (files.empty()) return;
+
+  selectorIndex = static_cast<size_t>(nextIndex);
+  lastNavigationTime = millis();
+  requestUpdate();
+}
+
 void FileBrowserActivity::loop() {
   // Long press BACK (1s+) goes to root folder
   // but Long press BACK (1s+) from ReaderActivity sends us here with the MappedInput already set.
@@ -159,9 +179,33 @@ void FileBrowserActivity::loop() {
     return;
   }
 
-  const int pathReserved = renderer.getLineHeight(SMALL_FONT_ID) + UITheme::getInstance().getMetrics().verticalSpacing;
-  const int pageItems =
-      UITheme::getInstance().getNumberOfItemsPerPage(renderer, true, false, true, false, pathReserved);
+  if (RenderLock::peek()) {
+    if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+      ignoreConfirmRelease = false;
+    }
+    if (mappedInput.wasReleased(MappedInputManager::Button::Up) ||
+        mappedInput.wasReleased(MappedInputManager::Button::Down)) {
+      lastNavigationTime = 0;
+    }
+    return;
+  }
+
+  if (ignoreConfirmRelease) {
+    if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+      ignoreConfirmRelease = false;
+    }
+    return;
+  }
+
+  if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
+    if (!files.empty()) {
+      const std::string& entry = files[selectorIndex];
+      if (entry.back() == '/') {
+        navigateToDirectory(entry);
+        return;
+      }
+    }
+  }
 
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
     if (files.empty()) return;
@@ -203,14 +247,10 @@ void FileBrowserActivity::loop() {
       return;
     } else {
       // --- SHORT PRESS ACTION: OPEN/NAVIGATE ---
-      if (basepath.back() != '/') basepath += "/";
-
       if (isDirectory) {
-        basepath += entry.substr(0, entry.length() - 1);
-        loadFiles();
-        selectorIndex = 0;
-        requestUpdate();
+        navigateToDirectory(entry);
       } else {
+        if (basepath.back() != '/') basepath += "/";
         onSelectBook(basepath + entry);
       }
     }
@@ -238,40 +278,28 @@ void FileBrowserActivity::loop() {
     }
   }
 
-  int listSize = static_cast<int>(files.size());
-#if CROSSPOINT_PAPERS3
-  // On Paper S3, Up/Down move one row at a time
-  if (mappedInput.wasReleased(MappedInputManager::Button::Up)) {
-    selectorIndex = ButtonNavigator::previousIndex(static_cast<int>(selectorIndex), listSize);
-    requestUpdate();
+  const int listSize = static_cast<int>(files.size());
+  const bool upPressed = mappedInput.wasPressed(MappedInputManager::Button::Up);
+  const bool downPressed = mappedInput.wasPressed(MappedInputManager::Button::Down);
+  const bool upHeld = mappedInput.isPressed(MappedInputManager::Button::Up);
+  const bool downHeld = mappedInput.isPressed(MappedInputManager::Button::Down);
+  const bool repeatDue = mappedInput.getHeldTime() >= NAV_REPEAT_START_MS &&
+                         (millis() - lastNavigationTime) >= NAV_REPEAT_INTERVAL_MS;
+
+  if (upPressed || (upHeld && repeatDue)) {
+    moveSelection(ButtonNavigator::previousIndex(static_cast<int>(selectorIndex), listSize));
     return;
   }
-  if (mappedInput.wasReleased(MappedInputManager::Button::Down)) {
-    selectorIndex = ButtonNavigator::nextIndex(static_cast<int>(selectorIndex), listSize);
-    requestUpdate();
+
+  if (downPressed || (downHeld && repeatDue)) {
+    moveSelection(ButtonNavigator::nextIndex(static_cast<int>(selectorIndex), listSize));
     return;
   }
-#else
-  buttonNavigator.onNextRelease([this, listSize] {
-    selectorIndex = ButtonNavigator::nextIndex(static_cast<int>(selectorIndex), listSize);
-    requestUpdate();
-  });
 
-  buttonNavigator.onPreviousRelease([this, listSize] {
-    selectorIndex = ButtonNavigator::previousIndex(static_cast<int>(selectorIndex), listSize);
-    requestUpdate();
-  });
-
-  buttonNavigator.onNextContinuous([this, listSize, pageItems] {
-    selectorIndex = ButtonNavigator::nextPageIndex(static_cast<int>(selectorIndex), listSize, pageItems);
-    requestUpdate();
-  });
-
-  buttonNavigator.onPreviousContinuous([this, listSize, pageItems] {
-    selectorIndex = ButtonNavigator::previousPageIndex(static_cast<int>(selectorIndex), listSize, pageItems);
-    requestUpdate();
-  });
-#endif
+  if (mappedInput.wasReleased(MappedInputManager::Button::Up) ||
+      mappedInput.wasReleased(MappedInputManager::Button::Down)) {
+    lastNavigationTime = 0;
+  }
 }
 
 std::string getFileName(std::string filename) {

@@ -15,6 +15,7 @@ class FontCacheManager {
   void setFontDecompressor(FontDecompressor* d);
 
   void clearCache();
+  void clearPageCacheOnly();
   void prewarmCache(int fontId, const char* utf8Text, uint8_t styleMask = 0x0F);
   void logStats(const char* label = "render");
   void resetStats();
@@ -50,6 +51,8 @@ class FontCacheManager {
   enum class ScanMode : uint8_t { None, Scanning };
   ScanMode scanMode_ = ScanMode::None;
   std::string scanText_;
-  uint32_t scanStyleCounts_[4] = {};
-  int scanFontId_ = -1;
+  static constexpr uint8_t MAX_SCAN_FONTS = 3;
+  uint32_t scanStyleCounts_[MAX_SCAN_FONTS][4] = {};
+  int scanFontIds_[MAX_SCAN_FONTS] = {-1, -1, -1};
+  uint8_t scanFontCount_ = 0;
 };

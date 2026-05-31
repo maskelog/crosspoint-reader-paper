@@ -10,11 +10,7 @@
 #include "fontIds.h"
 
 int XtcReaderChapterSelectionActivity::getPageItems() const {
-#if CROSSPOINT_PAPERS3
   constexpr int lineHeight = 75;
-#else
-  constexpr int lineHeight = 30;
-#endif
 
   const int screenHeight = renderer.getScreenHeight();
   const auto orientation = renderer.getOrientation();
@@ -59,7 +55,6 @@ void XtcReaderChapterSelectionActivity::onExit() { Activity::onExit(); }
 void XtcReaderChapterSelectionActivity::loop() {
   const int totalItems = static_cast<int>(xtc->getChapters().size());
 
-#if CROSSPOINT_PAPERS3
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
     const auto& chapters = xtc->getChapters();
     if (!chapters.empty() && selectorIndex >= 0 && selectorIndex < static_cast<int>(chapters.size())) {
@@ -84,41 +79,6 @@ void XtcReaderChapterSelectionActivity::loop() {
     requestUpdate();
     return;
   }
-#else
-  const int pageItems = getPageItems();
-  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
-    const auto& chapters = xtc->getChapters();
-    if (!chapters.empty() && selectorIndex >= 0 && selectorIndex < static_cast<int>(chapters.size())) {
-      setResult(PageResult{chapters[selectorIndex].startPage});
-      finish();
-    }
-  } else if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
-    ActivityResult result;
-    result.isCancelled = true;
-    setResult(std::move(result));
-    finish();
-  }
-
-  buttonNavigator.onNextRelease([this, totalItems] {
-    selectorIndex = ButtonNavigator::nextIndex(selectorIndex, totalItems);
-    requestUpdate();
-  });
-
-  buttonNavigator.onPreviousRelease([this, totalItems] {
-    selectorIndex = ButtonNavigator::previousIndex(selectorIndex, totalItems);
-    requestUpdate();
-  });
-
-  buttonNavigator.onNextContinuous([this, totalItems, pageItems] {
-    selectorIndex = ButtonNavigator::nextPageIndex(selectorIndex, totalItems, pageItems);
-    requestUpdate();
-  });
-
-  buttonNavigator.onPreviousContinuous([this, totalItems, pageItems] {
-    selectorIndex = ButtonNavigator::previousPageIndex(selectorIndex, totalItems, pageItems);
-    requestUpdate();
-  });
-#endif
 }
 
 void XtcReaderChapterSelectionActivity::render(RenderLock&&) {
@@ -152,11 +112,7 @@ void XtcReaderChapterSelectionActivity::render(RenderLock&&) {
     return;
   }
 
-#if CROSSPOINT_PAPERS3
   constexpr int lineHeight = 75;
-#else
-  constexpr int lineHeight = 30;
-#endif
   const int textLineH = renderer.getLineHeight(UI_10_FONT_ID);
   const int textYOff = (lineHeight - textLineH) / 2;
 

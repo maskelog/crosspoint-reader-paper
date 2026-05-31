@@ -556,7 +556,6 @@ bool JpegToBmpConverter::jpegFileTo1BitBmpStreamWithSize(FsFile& jpegFile, Print
                                                          int targetMaxHeight) {
   return jpegFileToBmpStreamInternal(jpegFile, bmpOut, targetMaxWidth, targetMaxHeight, true, true);
 }
-#if CROSSPOINT_PAPERS3
 #include <JPEGDEC.h>
 #include <esp_heap_caps.h>
 
@@ -716,4 +715,3 @@ bool JpegToBmpConverter::jpegMemTo1BitBmp(const uint8_t* jpegData, size_t jpegSi
   LOG_DBG("JPG", "JPEGDEC fast path: thumb BMP generated successfully");
   return true;
 }
-#endif

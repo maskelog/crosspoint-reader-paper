@@ -1,6 +1,17 @@
 #include <HalGPIO.h>
 #include <Logging.h>
-#include <SPI.h>
+
+#include <driver/rtc_io.h>
+#include <esp_sleep.h>
+// Physical side buttons on M5Paper (active LOW, pulled up):
+//   GPIO37 = BtnA = UP
+//   GPIO38 = BtnB = ON / CONFIRM (also long-press → sleep, wakeup source)
+//   GPIO39 = BtnC = DOWN
+// There is no software-readable power switch; sleep is requested by long-press
+// on BtnB, and the device wakes from deep sleep when BtnB is pressed.
+
+// Long-press duration on BtnB that requests deep sleep.
+static constexpr unsigned long M5PAPER_BTNB_SLEEP_HOLD_MS = 1500;
 
 // Touch zones in LOGICAL portrait coordinates (540 wide x 960 tall).
 // The physical display is 960x540 landscape; GfxRenderer rotates to portrait.
@@ -51,12 +62,11 @@ static constexpr int16_t ZONE_LEFT_END = PORT_W / 3;         // 180
 static constexpr int16_t ZONE_RIGHT_START = PORT_W * 2 / 3;  // 360
 
 void HalGPIO::begin() {
-  // Initialize SD card SPI bus with PaperS3 pins
-  SPI.begin(PAPERS3_SD_SCK, PAPERS3_SD_MISO, PAPERS3_SD_MOSI, PAPERS3_SD_CS);
-  // Initialize GT911 touch on I2C1 (SDA=41, SCL=42, INT=48)
-  if (!touch.begin(41, 42, 48, 0x14)) {
-    LOG_ERR("GPIO", "GT911 touch init failed");
-  }
+  // M5.begin() initialises display, touch (FT6336 on M5Paper), I2C, power.
+  auto cfg = M5.config();
+  cfg.serial_baudrate = 115200;
+  M5.begin(cfg);
+  LOG_INF("GPIO", "M5Paper M5.begin() done");
 }
 
 int16_t HalGPIO::getLastTouchX() const {
@@ -112,88 +122,92 @@ void HalGPIO::update() {
   previousState = currentState;
   currentState = 0;
 
-  // During cooldown (after activity transition), drain touch events but don't act on them
+  // --- Platform-specific input reading ---
+  bool touching = false;
+  uint8_t numPoints = 0;
+
+  M5.update();
+
+  // Physical side buttons:
+  //   BtnA (GPIO37) → UP
+  //   BtnB (GPIO38) → CONFIRM; held ≥1.5s → POWER (sleep request)
+  //   BtnC (GPIO39) → DOWN
+  if (M5.BtnA.isPressed()) currentState |= (1 << BTN_UP);
+  if (M5.BtnC.isPressed()) currentState |= (1 << BTN_DOWN);
+  if (M5.BtnB.isPressed()) {
+    currentState |= (1 << BTN_CONFIRM);
+    if (M5.BtnB.pressedFor(M5PAPER_BTNB_SLEEP_HOLD_MS)) {
+      currentState |= (1 << BTN_POWER);
+    }
+  }
+
   if (millis() < cooldownUntil) {
-    touch.update();  // Drain pending touch reports
     touchActive = false;
     sawMultiTouch = false;
+    uint16_t newPresses = currentState & ~previousState;
+    if (newPresses) pressStartTime = millis();
     return;
   }
 
-  bool touching = touch.update();
-  uint8_t numPoints = touch.getNumPoints();
-
-  if (touching) {
-    lastTouchX = touch.getX();
-    lastTouchY = touch.getY();
-
-    // Track multi-touch: if we ever see 2+ fingers during this sequence, remember it
-    if (numPoints >= 2) {
-      sawMultiTouch = true;
+  {
+    auto td = M5.Touch.getDetail(0);
+    touching = td.isPressed() || td.isHolding();
+    numPoints = (uint8_t)M5.Touch.getCount();
+    if (touching) {
+      // FT6336 reports raw landscape coords regardless of setRotation().
+      // Hardware rotation=1 (90° CW) maps landscape (td.x, td.y) to portrait as:
+      //   portrait logX = 539 - td.y,  portrait logY = td.x
+      LOG_DBG("TOUCH", "raw td.x=%d td.y=%d", (int)td.x, (int)td.y);
+      lastTouchX = 539 - (int16_t)td.y;
+      lastTouchY = (int16_t)td.x;
     }
+  }
 
-    // Record start position on initial touch-down
+
+  // --- Shared gesture classification (portrait logical coords) ---
+  if (touching) {
+    if (numPoints >= 2) sawMultiTouch = true;
+
     if (!touchActive) {
       touchActive = true;
       touchStartX = lastTouchX;
       touchStartY = lastTouchY;
     }
-
-    // While finger is down, report the zone button as pressed (for held-time detection).
-    // Use touchStart (not current) position so the zone stays locked to the initial tap
-    // intent and doesn't bounce across zone boundaries when the finger drifts slightly.
     int btn = touchZoneToButton(touchStartX, touchStartY);
-    if (btn >= 0 && btn < HALGPIO_NUM_BUTTONS) {
-      currentState |= (1 << btn);
-    }
+    if (btn >= 0 && btn < HALGPIO_NUM_BUTTONS) currentState |= (1 << btn);
+
   } else if (touchActive) {
-    // Finger just lifted — classify the gesture
     lastHeldTime = millis() - pressStartTime;
     touchActive = false;
 
     if (footerHeight > 0) {
-      // Footer active (non-reader): no gestures — all touches are plain taps.
-      // 2-finger and swipe are disabled; the footer buttons provide Back/Prev/Next.
       int btn = touchZoneToButton(touchStartX, touchStartY);
-      if (btn >= 0 && btn < HALGPIO_NUM_BUTTONS) {
-        currentState |= (1 << btn);
-      }
-      LOG_DBG("TOUCH", "tap at (%d,%d) btn=%d (footer mode)", touchStartX, touchStartY, btn);
+      if (btn >= 0 && btn < HALGPIO_NUM_BUTTONS) currentState |= (1 << btn);
+      LOG_DBG("TOUCH", "tap (%d,%d) btn=%d footer", touchStartX, touchStartY, btn);
     } else if (sawMultiTouch) {
-      // 2-finger tap → BACK (reader only)
       currentState |= (1 << BTN_BACK);
       currentState |= (1 << BTN_TWO_FINGER);
-      LOG_DBG("TOUCH", "2-finger tap -> BACK");
+      LOG_DBG("TOUCH", "2-finger -> BACK");
     } else {
-      // Single finger: check for swipe vs tap (reader only)
-      int16_t startLogicalX = 0;
-      int16_t startLogicalY = 0;
-      int16_t lastLogicalX = 0;
-      int16_t lastLogicalY = 0;
-      transformTouchPoint(touchStartX, touchStartY, &startLogicalX, &startLogicalY);
-      transformTouchPoint(lastTouchX, lastTouchY, &lastLogicalX, &lastLogicalY);
-      int16_t deltaY = lastLogicalY - startLogicalY;
+      int16_t startLogX = 0, startLogY = 0, lastLogX = 0, lastLogY = 0;
+      transformTouchPoint(touchStartX, touchStartY, &startLogX, &startLogY);
+      transformTouchPoint(lastTouchX,  lastTouchY,  &lastLogX,  &lastLogY);
+      const int16_t deltaY = lastLogY - startLogY;
 
       if (deltaY < -SWIPE_THRESHOLD) {
-        // Swiped up (finger moved upward)
         currentState |= (1 << BTN_SWIPE_UP);
         currentState |= (1 << BTN_UP);
         LOG_DBG("TOUCH", "swipe up dy=%d", deltaY);
       } else if (deltaY > SWIPE_THRESHOLD) {
-        // Swiped down (finger moved downward)
         currentState |= (1 << BTN_SWIPE_DOWN);
         currentState |= (1 << BTN_DOWN);
         LOG_DBG("TOUCH", "swipe down dy=%d", deltaY);
       } else {
-        // Tap — map to zone based on touch-down position
         int btn = touchZoneToButton(touchStartX, touchStartY);
-        if (btn >= 0 && btn < HALGPIO_NUM_BUTTONS) {
-          currentState |= (1 << btn);
-        }
-        LOG_DBG("TOUCH", "tap at (%d,%d) btn=%d", touchStartX, touchStartY, btn);
+        if (btn >= 0 && btn < HALGPIO_NUM_BUTTONS) currentState |= (1 << btn);
+        LOG_DBG("TOUCH", "tap (%d,%d) btn=%d", touchStartX, touchStartY, btn);
       }
     }
-
     sawMultiTouch = false;
   }
 
@@ -202,10 +216,7 @@ void HalGPIO::update() {
   if (newPresses) {
     pressStartTime = millis();
     for (uint8_t i = 0; i < HALGPIO_NUM_BUTTONS; i++) {
-      if (newPresses & (1 << i)) {
-        lastPressedButton = i;
-        break;
-      }
+      if (newPresses & (1 << i)) { lastPressedButton = i; break; }
     }
   }
 }
@@ -247,30 +258,16 @@ unsigned long HalGPIO::getHeldTime() const {
 }
 
 bool HalGPIO::isUsbConnected() const {
-  // With ARDUINO_USB_CDC_ON_BOOT=1, Serial is USB CDC.
-  // operator bool() returns true when a USB host has connected (DTR asserted).
-  // Serial.begin() must be called before this for reliable results.
-  return Serial;
+  // M5Paper uses UART, not USB CDC — always return true so cold-boot is
+  // treated as AfterFlash (proceed to boot) rather than PowerButton.
+  return true;
 }
 
 HalGPIO::WakeupReason HalGPIO::getWakeupReason() const {
-  const bool usbConnected = isUsbConnected();
   const auto wakeupCause = esp_sleep_get_wakeup_cause();
-  const auto resetReason = esp_reset_reason();
 
-  if (wakeupCause == ESP_SLEEP_WAKEUP_EXT0 || wakeupCause == ESP_SLEEP_WAKEUP_EXT1 ||
-      wakeupCause == ESP_SLEEP_WAKEUP_GPIO) {
-    return WakeupReason::PowerButton;
-  }
-  if (wakeupCause == ESP_SLEEP_WAKEUP_UNDEFINED && resetReason == ESP_RST_POWERON && !usbConnected) {
-    return WakeupReason::PowerButton;
-  }
-  // ESP32-S3: After flash, esptool hard-resets via RTS → ESP_RST_POWERON (not ESP_RST_UNKNOWN like ESP32-C3).
-  // On M5PaperS3, the PMIC handles charging independently, so any cold boot with USB connected
-  // should proceed to boot normally (treat as AfterFlash).
-  if (wakeupCause == ESP_SLEEP_WAKEUP_UNDEFINED && usbConnected &&
-      (resetReason == ESP_RST_UNKNOWN || resetReason == ESP_RST_POWERON)) {
-    return WakeupReason::AfterFlash;
-  }
+  // M5Paper enters deep sleep with EXT0 on GPIO37 (BtnA).
+  // All other wakeup causes are cold-boot / after-flash — proceed normally.
+  if (wakeupCause == ESP_SLEEP_WAKEUP_EXT0) return WakeupReason::PowerButton;
   return WakeupReason::Other;
 }

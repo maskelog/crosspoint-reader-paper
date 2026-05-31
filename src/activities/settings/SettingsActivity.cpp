@@ -155,12 +155,10 @@ void SettingsActivity::toggleCurrentSetting() {
     const bool currentValue = SETTINGS.*(setting.valuePtr);
     SETTINGS.*(setting.valuePtr) = !currentValue;
   } else if (setting.type == SettingType::ENUM && setting.valuePtr != nullptr) {
-#if CROSSPOINT_PAPERS3
     if (setting.valuePtr == &CrossPointSettings::orientation) {
       const uint8_t currentValue = SETTINGS.*(setting.valuePtr);
       SETTINGS.*(setting.valuePtr) = CrossPointSettings::nextPaperS3Orientation(currentValue);
     } else
-#endif
     {
       const uint8_t currentValue = SETTINGS.*(setting.valuePtr);
       SETTINGS.*(setting.valuePtr) = (currentValue + 1) % static_cast<uint8_t>(setting.enumValues.size());
@@ -247,11 +245,9 @@ void SettingsActivity::render(RenderLock&&) {
           valueText = value ? tr(STR_STATE_ON) : tr(STR_STATE_OFF);
         } else if (setting.type == SettingType::ENUM && setting.valuePtr != nullptr) {
           uint8_t value = SETTINGS.*(setting.valuePtr);
-#if CROSSPOINT_PAPERS3
           if (setting.valuePtr == &CrossPointSettings::orientation) {
             value = CrossPointSettings::normalizePaperS3Orientation(value);
           }
-#endif
           valueText = I18N.get(setting.enumValues[value]);
         } else if (setting.type == SettingType::VALUE && setting.valuePtr != nullptr) {
           valueText = std::to_string(SETTINGS.*(setting.valuePtr));

@@ -13,41 +13,20 @@ constexpr ThemeMetrics values = {.batteryWidth = 16,
                                  .headerHeight = 84,
                                  .verticalSpacing = 16,
                                  .contentSidePadding = 20,
-#if CROSSPOINT_PAPERS3
                                  .listRowHeight = 60,
                                  .listWithSubtitleRowHeight = 70,
                                  .menuRowHeight = 60,
                                  .menuSpacing = 8,
-#else
-                                 .listRowHeight = 40,
-                                 .listWithSubtitleRowHeight = 60,
-                                 .menuRowHeight = 64,
-                                 .menuSpacing = 8,
-#endif
                                  .tabSpacing = 8,
-#if CROSSPOINT_PAPERS3
                                  .tabBarHeight = 80,
-#else
-                                 .tabBarHeight = 40,
-#endif
                                  .scrollBarWidth = 4,
                                  .scrollBarRightOffset = 5,
                                  .homeTopPadding = 56,
-#if CROSSPOINT_PAPERS3
                                  .homeCoverHeight = 305,
                                  .homeCoverTileHeight = 327,
-#else
-                                 .homeCoverHeight = 226,
-                                 .homeCoverTileHeight = 242,
-#endif
                                  .homeRecentBooksCount = 1,
-#if CROSSPOINT_PAPERS3
                                  .buttonHintsHeight = 80,
                                  .sideButtonHintsWidth = 0,
-#else
-                                 .buttonHintsHeight = 40,
-                                 .sideButtonHintsWidth = 30,
-#endif
                                  .progressBarHeight = 16,
                                  .progressBarMarginTop = 1,
                                  .statusBarHorizontalMargin = 5,

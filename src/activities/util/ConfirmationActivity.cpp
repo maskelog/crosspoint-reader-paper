@@ -56,7 +56,6 @@ void ConfirmationActivity::render(RenderLock&& lock) {
 }
 
 void ConfirmationActivity::loop() {
-#if CROSSPOINT_PAPERS3
   // Footer buttons: Up = Cancel, Down = Confirm (matches drawButtonHints layout)
   if (mappedInput.wasReleased(MappedInputManager::Button::Up) ||
       mappedInput.wasReleased(MappedInputManager::Button::Back)) {
@@ -74,21 +73,4 @@ void ConfirmationActivity::loop() {
     finish();
     return;
   }
-#else
-  if (mappedInput.wasReleased(MappedInputManager::Button::Right)) {
-    ActivityResult res;
-    res.isCancelled = false;
-    setResult(std::move(res));
-    finish();
-    return;
-  }
-
-  if (mappedInput.wasReleased(MappedInputManager::Button::Left)) {
-    ActivityResult res;
-    res.isCancelled = true;
-    setResult(std::move(res));
-    finish();
-    return;
-  }
-#endif
 }

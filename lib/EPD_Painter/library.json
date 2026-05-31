@@ -1,7 +1,0 @@
-{
-  "name": "EPD_Painter",
-  "version": "1.0.0",
-  "description": "Fast M5PaperS3 e-paper driver (stripped for CrossPoint integration)",
-  "frameworks": "arduino",
-  "platforms": "espressif32"
-}

@@ -3,6 +3,7 @@
 #include <Arduino.h>
 #include <Logging.h>
 #include <Utf8.h>
+#include <freertos/task.h>
 
 #include <cstdlib>
 
@@ -22,6 +23,8 @@ void FontDecompressor::clearCache() {
   freePageBuffer();
   freeHotGroup();
 }
+
+void FontDecompressor::clearPageCacheOnly() { freePageBuffer(); }
 
 void FontDecompressor::freePageBuffer() {
   free(pageBuffer);
@@ -60,17 +63,38 @@ uint16_t FontDecompressor::getGroupIndex(const EpdFontData* fontData, uint32_t g
 bool FontDecompressor::decompressGroup(const EpdFontData* fontData, uint16_t groupIndex, uint8_t* outBuf,
                                        uint32_t outSize) {
   const EpdFontGroup& group = fontData->groups[groupIndex];
+  constexpr size_t DECOMPRESS_CHUNK_SIZE = 4096;
 
   const uint32_t tDecomp = millis();
-  inflateReader.init(false);
-  inflateReader.setSource(&fontData->bitmap[group.compressedOffset], group.compressedSize);
-  if (!inflateReader.read(outBuf, outSize)) {
-    stats.decompressTimeMs += millis() - tDecomp;
-    LOG_ERR("FDC", "Decompression failed for group %u", groupIndex);
+  if (!inflateReader.init(true)) {
+    LOG_ERR("FDC", "Failed to allocate inflate ring buffer for group %u", groupIndex);
     return false;
   }
+  inflateReader.setSource(&fontData->bitmap[group.compressedOffset], group.compressedSize);
+
+  size_t producedTotal = 0;
+  while (producedTotal < outSize) {
+    size_t produced = 0;
+    const size_t remaining = outSize - producedTotal;
+    const size_t chunkSize = remaining < DECOMPRESS_CHUNK_SIZE ? remaining : DECOMPRESS_CHUNK_SIZE;
+    const InflateStatus status = inflateReader.readAtMost(outBuf + producedTotal, chunkSize, &produced);
+    producedTotal += produced;
+
+    if (status == InflateStatus::Error) {
+      stats.decompressTimeMs += millis() - tDecomp;
+      LOG_ERR("FDC", "Decompression failed for group %u", groupIndex);
+      return false;
+    }
+
+    vTaskDelay(1);
+
+    if (status == InflateStatus::Done) {
+      break;
+    }
+  }
+
   stats.decompressTimeMs += millis() - tDecomp;
-  return true;
+  return producedTotal == outSize;
 }
 
 // --- Byte-aligned helpers ---
