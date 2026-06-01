@@ -1,12 +1,21 @@
 #pragma once
 #include <Epub.h>
 #include <Epub/FootnoteEntry.h>
+#include <Epub/Page.h>
 #include <Epub/Section.h>
 
 #include "EpubReaderMenuActivity.h"
 #include "activities/Activity.h"
 
 class EpubReaderActivity final : public Activity {
+  struct NextChapterIndexJob {
+    std::unique_ptr<Section> section;
+    Section::BuildState state;
+    int spineIndex = -1;
+    uint16_t viewportWidth = 0;
+    uint16_t viewportHeight = 0;
+    bool active = false;
+  };
   std::shared_ptr<Epub> epub;
   std::unique_ptr<Section> section = nullptr;
   int currentSpineIndex = 0;
@@ -27,6 +36,18 @@ class EpubReaderActivity final : public Activity {
   bool pendingScreenshot = false;
   bool skipNextButtonCheck = false;  // Skip button processing for one frame after subactivity exit
   bool automaticPageTurnActive = false;
+  int lastSavedSpineIndex = -1;
+  int lastSavedPage = -1;
+  int lastSavedPageCount = -1;
+  unsigned long lastProgressSaveTime = 0UL;
+  std::unique_ptr<Page> prefetchedPage = nullptr;
+  int prefetchedSpineIndex = -1;
+  int prefetchedPageNumber = -1;
+  std::unique_ptr<NextChapterIndexJob> nextChapterIndexJob = nullptr;
+  Section::BuildState currentSectionBuildState;
+  bool currentSectionBuildActive = false;
+  bool firstBuildPageDisplayed = false;
+  int currentSectionBuildSpine = -1;
 
   // Footnote support
   std::vector<FootnoteEntry> currentPageFootnotes;
@@ -41,8 +62,17 @@ class EpubReaderActivity final : public Activity {
   void renderContents(std::unique_ptr<Page> page, int orientedMarginTop, int orientedMarginRight,
                       int orientedMarginBottom, int orientedMarginLeft);
   void renderStatusBar() const;
-  void silentIndexNextChapterIfNeeded(uint16_t viewportWidth, uint16_t viewportHeight);
-  void saveProgress(int spineIndex, int currentPage, int pageCount);
+  void saveProgress(int spineIndex, int currentPage, int pageCount, bool force = false);
+  std::unique_ptr<Page> loadCurrentPage();
+  void clearPrefetchedPage();
+  void prefetchNextPage();
+  void scheduleNextChapterIndex(uint16_t viewportWidth, uint16_t viewportHeight);
+  void pumpNextChapterIndexJob();
+  void cancelNextChapterIndexJob();
+  bool startCurrentSectionBuild(uint16_t viewportWidth, uint16_t viewportHeight);
+  bool pumpCurrentSectionBuildUntilFirstPage();
+  void pumpCurrentSectionBuildJob();
+  void cancelCurrentSectionBuildJob();
   // Jump to a percentage of the book (0-100), mapping it to spine and page.
   void jumpToPercent(int percent);
   void onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction action);
@@ -57,6 +87,7 @@ class EpubReaderActivity final : public Activity {
  public:
   explicit EpubReaderActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::unique_ptr<Epub> epub)
       : Activity("EpubReader", renderer, mappedInput), epub(std::move(epub)) {}
+  ~EpubReaderActivity() override;
   void onEnter() override;
   void onExit() override;
   void loop() override;

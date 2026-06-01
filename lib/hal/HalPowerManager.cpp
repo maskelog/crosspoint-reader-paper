@@ -57,6 +57,13 @@ void HalPowerManager::startDeepSleep(HalGPIO& gpio) const {
 
 }
 
+void HalPowerManager::powerOff() const {
+  LOG_DBG("PWR", "Powering off");
+  WiFi.mode(WIFI_OFF);
+  delay(100);
+  M5.Power.powerOff();
+}
+
 uint16_t HalPowerManager::getBatteryPercentage() const {
   int level = M5.Power.getBatteryLevel();  // 0-100, or -1 if not available
   return (level >= 0) ? (uint16_t)level : 0;

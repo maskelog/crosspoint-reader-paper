@@ -964,7 +964,9 @@ void XMLCALL ChapterHtmlSlimParser::endElement(void* userData, const XML_Char* n
   }
 }
 
-bool ChapterHtmlSlimParser::parseAndBuildPages() {
+bool ChapterHtmlSlimParser::beginParse() {
+  if (parseStarted) return true;
+
   auto paragraphAlignmentBlockStyle = BlockStyle();
   paragraphAlignmentBlockStyle.textAlignDefined = true;
   // Resolve None sentinel to Justify for initial block (no CSS context yet)
@@ -974,8 +976,7 @@ bool ChapterHtmlSlimParser::parseAndBuildPages() {
   paragraphAlignmentBlockStyle.alignment = align;
   startNewTextBlock(paragraphAlignmentBlockStyle);
 
-  XML_Parser parser = XML_ParserCreate(nullptr);
-  int done;
+  parser = XML_ParserCreate(nullptr);
 
   if (!parser) {
     LOG_ERR("EHP", "Couldn't allocate memory for parser");
@@ -986,14 +987,14 @@ bool ChapterHtmlSlimParser::parseAndBuildPages() {
   // Using DefaultHandlerExpand preserves normal entity expansion from DOCTYPE
   XML_SetDefaultHandlerExpand(parser, defaultHandlerExpand);
 
-  FsFile file;
-  if (!Storage.openFileForRead("EHP", filepath, file)) {
+  if (!Storage.openFileForRead("EHP", filepath, parseFile)) {
     destroyXmlParser(parser);
+    parser = nullptr;
     return false;
   }
 
   // Get file size to decide whether to show indexing popup.
-  if (popupFn && file.size() >= MIN_SIZE_FOR_POPUP) {
+  if (popupFn && parseFile.size() >= MIN_SIZE_FOR_POPUP) {
     popupFn();
   }
 
@@ -1002,40 +1003,57 @@ bool ChapterHtmlSlimParser::parseAndBuildPages() {
   XML_SetCharacterDataHandler(parser, characterData);
 
   // Compute the time taken to parse and build pages
-  const uint32_t chapterStartTime = millis();
+  chapterStartTime = millis();
+  parseStarted = true;
+  parseDone = false;
+  return true;
+}
+
+bool ChapterHtmlSlimParser::parseNextChunk(const uint32_t budgetMs) {
+  if (!parseStarted && !beginParse()) return false;
+  if (parseDone) return true;
+
+  const uint32_t sliceStart = millis();
   do {
     void* const buf = XML_GetBuffer(parser, PARSE_BUFFER_SIZE);
     if (!buf) {
       LOG_ERR("EHP", "Couldn't allocate memory for buffer");
-      destroyXmlParser(parser);
-      file.close();
+      abortParse();
       return false;
     }
 
-    const size_t len = file.read(buf, PARSE_BUFFER_SIZE);
+    const size_t len = parseFile.read(buf, PARSE_BUFFER_SIZE);
 
-    if (len == 0 && file.available() > 0) {
+    if (len == 0 && parseFile.available() > 0) {
       LOG_ERR("EHP", "File read error");
-      destroyXmlParser(parser);
-      file.close();
+      abortParse();
       return false;
     }
 
-    done = file.available() == 0;
+    const bool done = parseFile.available() == 0;
 
     if (XML_ParseBuffer(parser, static_cast<int>(len), done) == XML_STATUS_ERROR) {
       LOG_ERR("EHP", "Parse error at line %lu:\n%s", XML_GetCurrentLineNumber(parser),
               XML_ErrorString(XML_GetErrorCode(parser)));
-      destroyXmlParser(parser);
-      file.close();
+      abortParse();
       return false;
     }
+    parseDone = done;
     vTaskDelay(1);
-  } while (!done);
+  } while (!parseDone && (budgetMs == 0 || millis() - sliceStart < budgetMs));
+
+  return true;
+}
+
+bool ChapterHtmlSlimParser::finishParse() {
+  if (!parseStarted) return false;
+  if (!parseDone) return true;
+
   LOG_DBG("EHP", "Time to parse and build pages: %lu ms", millis() - chapterStartTime);
 
   destroyXmlParser(parser);
-  file.close();
+  parser = nullptr;
+  parseFile.close();
 
   // Process last page if there is still text
   if (currentTextBlock) {
@@ -1050,7 +1068,27 @@ bool ChapterHtmlSlimParser::parseAndBuildPages() {
     currentTextBlock.reset();
   }
 
+  LOG_DBG("EHP", "Layout summary: blocks=%u lines=%u pages=%d layout=%lums total=%lums", laidOutBlockCount,
+          laidOutLineCount, completedPageCount, layoutTimeMs, millis() - chapterStartTime);
   return true;
+}
+
+void ChapterHtmlSlimParser::abortParse() {
+  if (parser) {
+    destroyXmlParser(parser);
+    parser = nullptr;
+  }
+  parseFile.close();
+  parseStarted = false;
+  parseDone = false;
+}
+
+bool ChapterHtmlSlimParser::parseAndBuildPages() {
+  if (!beginParse()) return false;
+  while (!isParseDone()) {
+    if (!parseNextChunk(0)) return false;
+  }
+  return finishParse();
 }
 
 void ChapterHtmlSlimParser::addLineToPage(std::shared_ptr<TextBlock> line) {
@@ -1080,6 +1118,7 @@ void ChapterHtmlSlimParser::addLineToPage(std::shared_ptr<TextBlock> line) {
   // Apply horizontal left inset (margin + padding) as x position offset
   const int16_t xOffset = line->getBlockStyle().leftInset();
   currentPage->elements.push_back(std::make_shared<PageLine>(line, xOffset, currentPageNextY));
+  laidOutLineCount++;
   currentPageNextY += lineHeight;
   if ((currentPage->elements.size() & 0x0F) == 0) {
     vTaskDelay(1);
@@ -1091,6 +1130,8 @@ void ChapterHtmlSlimParser::makePages() {
     LOG_ERR("EHP", "!! No text block to make pages for !!");
     return;
   }
+  const uint32_t layoutStart = millis();
+  const uint16_t linesBefore = laidOutLineCount;
 
   if (!currentPage) {
     currentPage.reset(new Page());
@@ -1138,5 +1179,11 @@ void ChapterHtmlSlimParser::makePages() {
   // Extra paragraph spacing if enabled (default behavior)
   if (extraParagraphSpacing) {
     currentPageNextY += lineHeight / 2;
+  }
+  laidOutBlockCount++;
+  layoutTimeMs += millis() - layoutStart;
+  if ((laidOutBlockCount & 0x0F) == 0) {
+    LOG_DBG("EHP", "Layout progress: blocks=%u lines=%u lastBlockLines=%u layout=%lums", laidOutBlockCount,
+            laidOutLineCount, laidOutLineCount - linesBefore, layoutTimeMs);
   }
 }

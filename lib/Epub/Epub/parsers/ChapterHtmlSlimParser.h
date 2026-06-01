@@ -1,5 +1,6 @@
 #pragma once
 
+#include <HalStorage.h>
 #include <expat.h>
 
 #include <climits>
@@ -83,6 +84,14 @@ class ChapterHtmlSlimParser {
   char currentFootnoteLinkHref[64] = {};
   std::vector<std::pair<int, FootnoteEntry>> pendingFootnotes;  // <wordIndex, entry>
   int wordsExtractedInBlock = 0;
+  uint32_t layoutTimeMs = 0;
+  uint16_t laidOutBlockCount = 0;
+  uint16_t laidOutLineCount = 0;
+  XML_Parser parser = nullptr;
+  FsFile parseFile;
+  bool parseStarted = false;
+  bool parseDone = false;
+  uint32_t chapterStartTime = 0;
 
   void updateEffectiveInlineStyle();
   void startNewTextBlock(const BlockStyle& blockStyle);
@@ -123,6 +132,11 @@ class ChapterHtmlSlimParser {
         imageBasePath(imageBasePath) {}
 
   ~ChapterHtmlSlimParser() = default;
+  bool beginParse();
+  bool parseNextChunk(uint32_t budgetMs);
+  bool finishParse();
+  void abortParse();
+  bool isParseDone() const { return parseDone; }
   bool parseAndBuildPages();
   void addLineToPage(std::shared_ptr<TextBlock> line);
   const std::vector<std::pair<std::string, uint16_t>>& getAnchors() const { return anchorData; }

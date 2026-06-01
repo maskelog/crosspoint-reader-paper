@@ -35,6 +35,8 @@ uint32_t Section::onPageComplete(std::unique_ptr<Page> page) {
   return position;
 }
 
+Section::BuildState::~BuildState() = default;
+
 void Section::writeSectionFileHeader(const int fontId, const float lineCompression, const bool extraParagraphSpacing,
                                      const uint8_t paragraphAlignment, const uint16_t viewportWidth,
                                      const uint16_t viewportHeight, const bool hyphenationEnabled,
@@ -137,10 +139,183 @@ bool Section::clearCache() const {
   return true;
 }
 
+bool Section::beginCreateSectionFile(const int fontId, const float lineCompression, const bool extraParagraphSpacing,
+                                     const uint8_t paragraphAlignment, const uint16_t viewportWidth,
+                                     const uint16_t viewportHeight, const bool hyphenationEnabled,
+                                     const bool embeddedStyle, const uint8_t imageRendering, BuildState& state,
+                                     const std::function<void()>& popupFn) {
+  state.tmpHtmlPath.clear();
+  state.lut.clear();
+  state.visitor.reset();
+  state.firstVisiblePage.reset();
+  state.cssParser = nullptr;
+  state.streamMs = 0;
+  state.openMs = 0;
+  state.cssMs = 0;
+  state.parseStart = 0;
+  state.started = false;
+  state.totalStart = millis();
+  const auto localPath = epub->getSpineItem(spineIndex).href;
+  state.tmpHtmlPath = epub->getCachePath() + "/.tmp_" + std::to_string(spineIndex) + ".html";
+
+  {
+    const auto sectionsDir = epub->getCachePath() + "/sections";
+    Storage.mkdir(sectionsDir.c_str());
+  }
+
+  bool success = false;
+  uint32_t fileSize = 0;
+  const uint32_t streamStart = millis();
+  for (int attempt = 0; attempt < 3 && !success; attempt++) {
+    if (attempt > 0) {
+      LOG_DBG("SCT", "Retrying stream (attempt %d)...", attempt + 1);
+      delay(50);
+    }
+    if (Storage.exists(state.tmpHtmlPath.c_str())) {
+      Storage.remove(state.tmpHtmlPath.c_str());
+    }
+
+    FsFile tmpHtml;
+    if (!Storage.openFileForWrite("SCT", state.tmpHtmlPath, tmpHtml)) {
+      continue;
+    }
+    success = epub->readItemContentsToStream(localPath, tmpHtml, 1024);
+    fileSize = tmpHtml.size();
+    tmpHtml.close();
+
+    if (!success && Storage.exists(state.tmpHtmlPath.c_str())) {
+      Storage.remove(state.tmpHtmlPath.c_str());
+      LOG_DBG("SCT", "Removed incomplete temp file after failed attempt");
+    }
+  }
+
+  if (!success) {
+    LOG_ERR("SCT", "Failed to stream item contents to temp file after retries");
+    return false;
+  }
+  state.streamMs = millis() - streamStart;
+  LOG_DBG("SCT", "Streamed temp HTML to %s (%d bytes, %lums)", state.tmpHtmlPath.c_str(), fileSize, state.streamMs);
+
+  const uint32_t openStart = millis();
+  if (!Storage.openFileForWrite("SCT", filePath, file)) {
+    Storage.remove(state.tmpHtmlPath.c_str());
+    return false;
+  }
+  pageCount = 0;
+  writeSectionFileHeader(fontId, lineCompression, extraParagraphSpacing, paragraphAlignment, viewportWidth,
+                         viewportHeight, hyphenationEnabled, embeddedStyle, imageRendering);
+  state.openMs = millis() - openStart;
+
+  const size_t lastSlash = localPath.find_last_of('/');
+  const std::string contentBase = (lastSlash != std::string::npos) ? localPath.substr(0, lastSlash + 1) : "";
+  const std::string imageBasePath = epub->getCachePath() + "/img_" + std::to_string(spineIndex) + "_";
+
+  const uint32_t cssStart = millis();
+  if (embeddedStyle) {
+    state.cssParser = epub->getCssParser();
+    if (state.cssParser && !state.cssParser->loadFromCache()) {
+      LOG_ERR("SCT", "Failed to load CSS from cache");
+    }
+  }
+  state.cssMs = millis() - cssStart;
+
+  state.visitor.reset(new ChapterHtmlSlimParser(
+      epub, state.tmpHtmlPath, renderer, fontId, lineCompression, extraParagraphSpacing, paragraphAlignment,
+      viewportWidth, viewportHeight, hyphenationEnabled,
+      [this, &state](std::unique_ptr<Page> page) {
+        if (!state.firstVisiblePage) {
+          state.firstVisiblePage = page->cloneShallow();
+        }
+        state.lut.emplace_back(this->onPageComplete(std::move(page)));
+      },
+      embeddedStyle, contentBase, imageBasePath, imageRendering, popupFn, state.cssParser));
+  Hyphenator::setPreferredLanguage(epub->getLanguage());
+  state.parseStart = millis();
+  state.started = state.visitor->beginParse();
+  if (!state.started) {
+    cancelCreateSectionFile(state);
+    return false;
+  }
+  return true;
+}
+
+Section::BuildStatus Section::continueCreateSectionFile(BuildState& state, const uint32_t budgetMs) {
+  if (!state.started || !state.visitor) {
+    return BuildStatus::Failed;
+  }
+  if (!state.visitor->parseNextChunk(budgetMs)) {
+    cancelCreateSectionFile(state);
+    return BuildStatus::Failed;
+  }
+  if (!state.visitor->isParseDone()) {
+    return BuildStatus::Running;
+  }
+  if (!state.visitor->finishParse()) {
+    cancelCreateSectionFile(state);
+    return BuildStatus::Failed;
+  }
+
+  Storage.remove(state.tmpHtmlPath.c_str());
+  const uint32_t finalizeStart = millis();
+  const uint32_t lutOffset = file.position();
+  for (const uint32_t& pos : state.lut) {
+    if (pos == 0) {
+      LOG_ERR("SCT", "Failed to write LUT due to invalid page positions");
+      cancelCreateSectionFile(state);
+      return BuildStatus::Failed;
+    }
+    serialization::writePod(file, pos);
+  }
+
+  const uint32_t anchorMapOffset = file.position();
+  const auto& anchors = state.visitor->getAnchors();
+  serialization::writePod(file, static_cast<uint16_t>(anchors.size()));
+  for (const auto& [anchor, page] : anchors) {
+    serialization::writeString(file, anchor);
+    serialization::writePod(file, page);
+  }
+
+  file.seek(HEADER_SIZE - sizeof(uint32_t) * 2 - sizeof(pageCount));
+  serialization::writePod(file, pageCount);
+  serialization::writePod(file, lutOffset);
+  serialization::writePod(file, anchorMapOffset);
+  file.close();
+  if (state.cssParser) {
+    state.cssParser->clear();
+  }
+  const uint32_t finalizeMs = millis() - finalizeStart;
+  LOG_DBG("SCT", "Build timings: open=%lums stream=%lums css=%lums parse=%lums finalize=%lums total=%lums pages=%d",
+          state.openMs, state.streamMs, state.cssMs, millis() - state.parseStart, finalizeMs,
+          millis() - state.totalStart, pageCount);
+  state.visitor.reset();
+  state.started = false;
+  return BuildStatus::Done;
+}
+
+void Section::cancelCreateSectionFile(BuildState& state) {
+  if (state.visitor) {
+    state.visitor->abortParse();
+    state.visitor.reset();
+  }
+  state.firstVisiblePage.reset();
+  file.close();
+  if (state.cssParser) {
+    state.cssParser->clear();
+  }
+  if (!state.tmpHtmlPath.empty() && Storage.exists(state.tmpHtmlPath.c_str())) {
+    Storage.remove(state.tmpHtmlPath.c_str());
+  }
+  if (Storage.exists(filePath.c_str())) {
+    Storage.remove(filePath.c_str());
+  }
+  state.started = false;
+}
+
 bool Section::createSectionFile(const int fontId, const float lineCompression, const bool extraParagraphSpacing,
                                 const uint8_t paragraphAlignment, const uint16_t viewportWidth,
                                 const uint16_t viewportHeight, const bool hyphenationEnabled, const bool embeddedStyle,
                                 const uint8_t imageRendering, const std::function<void()>& popupFn) {
+  const uint32_t totalStart = millis();
   const auto localPath = epub->getSpineItem(spineIndex).href;
   const auto tmpHtmlPath = epub->getCachePath() + "/.tmp_" + std::to_string(spineIndex) + ".html";
 
@@ -153,6 +328,7 @@ bool Section::createSectionFile(const int fontId, const float lineCompression, c
   // Retry logic for SD card timing issues
   bool success = false;
   uint32_t fileSize = 0;
+  const uint32_t streamStart = millis();
   for (int attempt = 0; attempt < 3 && !success; attempt++) {
     if (attempt > 0) {
       LOG_DBG("SCT", "Retrying stream (attempt %d)...", attempt + 1);
@@ -185,13 +361,17 @@ bool Section::createSectionFile(const int fontId, const float lineCompression, c
     return false;
   }
 
-  LOG_DBG("SCT", "Streamed temp HTML to %s (%d bytes)", tmpHtmlPath.c_str(), fileSize);
+  const uint32_t streamEnd = millis();
+  LOG_DBG("SCT", "Streamed temp HTML to %s (%d bytes, %lums)", tmpHtmlPath.c_str(), fileSize,
+          streamEnd - streamStart);
 
+  const uint32_t sectionOpenStart = millis();
   if (!Storage.openFileForWrite("SCT", filePath, file)) {
     return false;
   }
   writeSectionFileHeader(fontId, lineCompression, extraParagraphSpacing, paragraphAlignment, viewportWidth,
                          viewportHeight, hyphenationEnabled, embeddedStyle, imageRendering);
+  const uint32_t sectionOpenEnd = millis();
   std::vector<uint32_t> lut = {};
 
   // Derive the content base directory and image cache path prefix for the parser
@@ -200,6 +380,7 @@ bool Section::createSectionFile(const int fontId, const float lineCompression, c
   std::string imageBasePath = epub->getCachePath() + "/img_" + std::to_string(spineIndex) + "_";
 
   CssParser* cssParser = nullptr;
+  const uint32_t cssStart = millis();
   if (embeddedStyle) {
     cssParser = epub->getCssParser();
     if (cssParser) {
@@ -208,6 +389,7 @@ bool Section::createSectionFile(const int fontId, const float lineCompression, c
       }
     }
   }
+  const uint32_t cssEnd = millis();
 
   ChapterHtmlSlimParser visitor(
       epub, tmpHtmlPath, renderer, fontId, lineCompression, extraParagraphSpacing, paragraphAlignment, viewportWidth,
@@ -215,7 +397,9 @@ bool Section::createSectionFile(const int fontId, const float lineCompression, c
       [this, &lut](std::unique_ptr<Page> page) { lut.emplace_back(this->onPageComplete(std::move(page))); },
       embeddedStyle, contentBase, imageBasePath, imageRendering, popupFn, cssParser);
   Hyphenator::setPreferredLanguage(epub->getLanguage());
+  const uint32_t parseStart = millis();
   success = visitor.parseAndBuildPages();
+  const uint32_t parseEnd = millis();
 
   Storage.remove(tmpHtmlPath.c_str());
   if (!success) {
@@ -229,6 +413,7 @@ bool Section::createSectionFile(const int fontId, const float lineCompression, c
     return false;
   }
 
+  const uint32_t finalizeStart = millis();
   const uint32_t lutOffset = file.position();
   bool hasFailedLutRecords = false;
   // Write LUT
@@ -267,6 +452,10 @@ bool Section::createSectionFile(const int fontId, const float lineCompression, c
   if (cssParser) {
     cssParser->clear();
   }
+  const uint32_t finalizeEnd = millis();
+  LOG_DBG("SCT", "Build timings: open=%lums stream=%lums css=%lums parse=%lums finalize=%lums total=%lums pages=%d",
+          sectionOpenEnd - sectionOpenStart, streamEnd - streamStart, cssEnd - cssStart, parseEnd - parseStart,
+          finalizeEnd - finalizeStart, finalizeEnd - totalStart, pageCount);
   return true;
 }
 

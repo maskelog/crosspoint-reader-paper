@@ -2,6 +2,7 @@
 #include <HalStorage.h>
 
 #include <algorithm>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -76,10 +77,22 @@ class Page {
   bool serialize(FsFile& file) const;
   static std::unique_ptr<Page> deserialize(FsFile& file);
 
+  std::unique_ptr<Page> cloneShallow() const {
+    std::unique_ptr<Page> page(new Page());
+    page->elements = elements;
+    page->footnotes = footnotes;
+    return page;
+  }
+
   // Check if page contains any images (used to force full refresh)
   bool hasImages() const {
     return std::any_of(elements.begin(), elements.end(),
                        [](const std::shared_ptr<PageElement>& el) { return el->getTag() == TAG_PageImage; });
+  }
+
+  uint16_t textLineCount() const {
+    return std::count_if(elements.begin(), elements.end(),
+                         [](const std::shared_ptr<PageElement>& el) { return el->getTag() == TAG_PageLine; });
   }
 
   // Get bounding box of all images on the page (union of image rects)

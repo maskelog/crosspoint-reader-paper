@@ -32,6 +32,9 @@ class HalPowerManager {
   // Should be called inside main loop() to handle the currentLockMode
   void startDeepSleep(HalGPIO& gpio) const;
 
+  // Request PMIC power-off. This does not return when the PMIC supports shutdown.
+  void powerOff() const;
+
   // Get battery percentage (range 0-100)
   uint16_t getBatteryPercentage() const;
 
