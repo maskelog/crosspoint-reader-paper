@@ -34,7 +34,7 @@ void GfxRenderer::begin() {
 void GfxRenderer::insertFont(const int fontId, EpdFontFamily font) { fontMap.insert({fontId, font}); }
 
 const EpdFontFamily* GfxRenderer::resolveFontFamily(const EpdFontFamily& primary, const uint32_t cp,
-                                                     const EpdFontFamily::Style style) const {
+                                                    const EpdFontFamily::Style style) const {
   if (fallbackFontId_ < 0 || primary.containsCodepoint(cp, style)) {
     return &primary;
   }
@@ -87,6 +87,23 @@ constexpr int EFONT_SCALE = 2;
 constexpr int EFONT_GLYPH_SIZE = 16;
 constexpr int EFONT_ASCENT = 28;
 
+struct TextRenderStats {
+  uint32_t drawTextCalls = 0;
+  uint32_t codepoints = 0;
+  uint32_t nonAsciiCodepoints = 0;
+  uint32_t glyphs = 0;
+  uint32_t compressedGlyphs = 0;
+  uint32_t efontGlyphs = 0;
+  uint32_t glyphPixelsTested = 0;
+  uint32_t glyphPixelsWritten = 0;
+  uint32_t grayPixelsWritten = 0;
+  uint32_t getBitmapUs = 0;
+  uint32_t glyphLoopUs = 0;
+  uint32_t efontLoopUs = 0;
+};
+
+TextRenderStats textRenderStats;
+
 bool isEfontFallbackCodepoint(const uint32_t cp) {
   return cp <= 0xFFFF &&
          ((cp >= 0x1100 && cp <= 0x11FF) ||    // Hangul Jamo
@@ -122,6 +139,8 @@ void renderEfontGlyph(const GfxRenderer& renderer, const GfxRenderer::RenderMode
   uint8_t font[32];
   if (!loadEfontGlyph(cp, font)) return;
 
+  const uint32_t tStart = micros();
+  uint32_t pixelsWritten = 0;
   const int topY = baselineY - EFONT_ASCENT;
   for (uint8_t row = 0; row < EFONT_GLYPH_SIZE; ++row) {
     const uint16_t fontData = (static_cast<uint16_t>(font[row * 2]) << 8) | font[row * 2 + 1];
@@ -132,25 +151,45 @@ void renderEfontGlyph(const GfxRenderer& renderer, const GfxRenderer::RenderMode
       if (EFONT_SCALE == 1) {
         if (renderMode == GfxRenderer::GRAYSCALE_DIRECT) {
           renderer.drawPixelGray(x, y, 3);
+          textRenderStats.grayPixelsWritten++;
         } else {
           renderer.drawPixel(x, y, pixelState);
         }
+        pixelsWritten++;
       } else {
         for (int dy = 0; dy < EFONT_SCALE; ++dy) {
           for (int dx = 0; dx < EFONT_SCALE; ++dx) {
             if (renderMode == GfxRenderer::GRAYSCALE_DIRECT) {
               renderer.drawPixelGray(x + dx, y + dy, 3);
+              textRenderStats.grayPixelsWritten++;
             } else {
               renderer.drawPixel(x + dx, y + dy, pixelState);
             }
+            pixelsWritten++;
           }
         }
       }
     }
   }
+  textRenderStats.efontGlyphs++;
+  textRenderStats.glyphPixelsTested += EFONT_GLYPH_SIZE * EFONT_GLYPH_SIZE;
+  textRenderStats.glyphPixelsWritten += pixelsWritten;
+  textRenderStats.efontLoopUs += micros() - tStart;
 }
 
 }  // namespace
+
+void GfxRenderer::resetTextRenderStats() const { textRenderStats = TextRenderStats{}; }
+
+void GfxRenderer::logTextRenderStats(const char* label) const {
+  LOG_DBG("GFX", "[%s] text: drawText=%lu cp=%lu nonAscii=%lu glyphs=%lu compressed=%lu efont=%lu", label,
+          textRenderStats.drawTextCalls, textRenderStats.codepoints, textRenderStats.nonAsciiCodepoints,
+          textRenderStats.glyphs, textRenderStats.compressedGlyphs, textRenderStats.efontGlyphs);
+  LOG_DBG("GFX", "[%s] text: pixels tested=%lu written=%lu gray=%lu", label, textRenderStats.glyphPixelsTested,
+          textRenderStats.glyphPixelsWritten, textRenderStats.grayPixelsWritten);
+  LOG_DBG("GFX", "[%s] text: getBitmap=%luus glyphLoop=%luus efontLoop=%luus", label, textRenderStats.getBitmapUs,
+          textRenderStats.glyphLoopUs, textRenderStats.efontLoopUs);
+}
 
 // Shared glyph rendering logic for normal and rotated text.
 // Coordinate mapping and cursor advance direction are selected at compile time via the template parameter.
@@ -171,9 +210,18 @@ static void renderCharImpl(const GfxRenderer& renderer, GfxRenderer::RenderMode 
   const int left = glyph->left;
   const int top = glyph->top;
 
+  const uint32_t tBitmap = micros();
   const uint8_t* bitmap = renderer.getGlyphBitmap(fontData, glyph);
+  textRenderStats.getBitmapUs += micros() - tBitmap;
+  textRenderStats.glyphs++;
+  if (fontData->groups != nullptr) {
+    textRenderStats.compressedGlyphs++;
+  }
 
   if (bitmap != nullptr) {
+    const uint32_t tLoop = micros();
+    uint32_t pixelsWritten = 0;
+    uint32_t grayPixelsWritten = 0;
     // For Normal:  outer loop advances screenY, inner loop advances screenX
     // For Rotated: outer loop advances screenX, inner loop advances screenY (in reverse)
     int outerBase, innerBase;
@@ -209,13 +257,18 @@ static void renderCharImpl(const GfxRenderer& renderer, GfxRenderer::RenderMode 
           if (renderMode == GfxRenderer::GRAYSCALE_DIRECT && bmpVal < 3) {
             // Write EPD gray value directly: bmpVal 0→3(black), 1→2(dk gray), 2→1(lt gray)
             renderer.drawPixelGray(screenX, screenY, 3 - bmpVal);
+            pixelsWritten++;
+            grayPixelsWritten++;
           } else if (renderMode == GfxRenderer::BW && bmpVal < 3) {
             // Black (also paints over the grays in BW mode)
             renderer.drawPixel(screenX, screenY, pixelState);
+            pixelsWritten++;
           } else if (renderMode == GfxRenderer::GRAYSCALE_MSB && (bmpVal == 1 || bmpVal == 2)) {
             renderer.drawPixel(screenX, screenY, false);
+            pixelsWritten++;
           } else if (renderMode == GfxRenderer::GRAYSCALE_LSB && bmpVal == 1) {
             renderer.drawPixel(screenX, screenY, false);
+            pixelsWritten++;
           }
         }
       }
@@ -238,10 +291,15 @@ static void renderCharImpl(const GfxRenderer& renderer, GfxRenderer::RenderMode 
 
           if ((byte >> bit_index) & 1) {
             renderer.drawPixel(screenX, screenY, pixelState);
+            pixelsWritten++;
           }
         }
       }
     }
+    textRenderStats.glyphPixelsTested += static_cast<uint32_t>(width) * static_cast<uint32_t>(height);
+    textRenderStats.glyphPixelsWritten += pixelsWritten;
+    textRenderStats.grayPixelsWritten += grayPixelsWritten;
+    textRenderStats.glyphLoopUs += micros() - tLoop;
   }
 }
 
@@ -320,9 +378,14 @@ void GfxRenderer::drawText(const int fontId, const int x, const int y, const cha
   }
   const auto& font = fontIt->second;
 
+  textRenderStats.drawTextCalls++;
   uint32_t cp;
   uint32_t prevCp = 0;
   while ((cp = utf8NextCodepoint(reinterpret_cast<const uint8_t**>(&text)))) {
+    textRenderStats.codepoints++;
+    if (cp > 0x7F) {
+      textRenderStats.nonAsciiCodepoints++;
+    }
     if (utf8IsCombiningMark(cp)) {
       const EpdGlyph* combiningGlyph = font.getGlyph(cp, style);
       if (!combiningGlyph) continue;

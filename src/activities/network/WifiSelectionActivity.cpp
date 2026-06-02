@@ -438,11 +438,13 @@ void WifiSelectionActivity::loop() {
 
     // Handle navigation
     buttonNavigator.onNext([this] {
+      if (RenderLock::peek()) return;
       selectedNetworkIndex = ButtonNavigator::nextIndex(selectedNetworkIndex, networks.size());
       requestUpdate();
     });
 
     buttonNavigator.onPrevious([this] {
+      if (RenderLock::peek()) return;
       selectedNetworkIndex = ButtonNavigator::previousIndex(selectedNetworkIndex, networks.size());
       requestUpdate();
     });

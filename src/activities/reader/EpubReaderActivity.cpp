@@ -980,7 +980,9 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
     renderer.setRenderMode(GfxRenderer::GRAYSCALE_DIRECT);
   }
 
+  renderer.resetTextRenderStats();
   page->render(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop);
+  renderer.logTextRenderStats("page_body");
   renderer.setRenderMode(GfxRenderer::BW);
   renderStatusBar();
   fcm->logStats("bw_render");

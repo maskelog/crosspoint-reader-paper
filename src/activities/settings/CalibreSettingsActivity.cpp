@@ -38,11 +38,13 @@ void CalibreSettingsActivity::loop() {
 
   // Handle navigation
   buttonNavigator.onNext([this] {
+    if (RenderLock::peek()) return;
     selectedIndex = (selectedIndex + 1) % MENU_ITEMS;
     requestUpdate();
   });
 
   buttonNavigator.onPrevious([this] {
+    if (RenderLock::peek()) return;
     selectedIndex = (selectedIndex + MENU_ITEMS - 1) % MENU_ITEMS;
     requestUpdate();
   });

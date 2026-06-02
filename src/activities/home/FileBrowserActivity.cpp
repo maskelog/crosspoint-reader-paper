@@ -19,7 +19,7 @@
 namespace {
 constexpr unsigned long GO_HOME_MS = 1000;
 constexpr unsigned long NAV_REPEAT_START_MS = 300;
-constexpr unsigned long NAV_REPEAT_INTERVAL_MS = 350;
+constexpr unsigned long NAV_REPEAT_INTERVAL_MS = 450;
 }  // namespace
 
 void sortFileList(std::vector<std::string>& strs) {
@@ -155,6 +155,7 @@ void FileBrowserActivity::navigateToDirectory(const std::string& entry) {
 
 void FileBrowserActivity::moveSelection(int nextIndex) {
   if (files.empty()) return;
+  if (RenderLock::peek()) return;
 
   selectorIndex = static_cast<size_t>(nextIndex);
   lastNavigationTime = millis();

@@ -45,7 +45,7 @@ void RecentBooksActivity::onExit() {
 }
 
 void RecentBooksActivity::loop() {
-  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+  if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
     if (!recentBooks.empty() && selectorIndex < static_cast<int>(recentBooks.size())) {
       LOG_DBG("RBA", "Selected recent book: %s", recentBooks[selectorIndex].path.c_str());
       onSelectBook(recentBooks[selectorIndex].path);
@@ -59,16 +59,17 @@ void RecentBooksActivity::loop() {
 
   int listSize = static_cast<int>(recentBooks.size());
   // On Paper S3, Up/Down move one row at a time
-  if (mappedInput.wasReleased(MappedInputManager::Button::Up)) {
+  buttonNavigator.onPrevious([this, listSize] {
+    if (RenderLock::peek()) return;
     selectorIndex = ButtonNavigator::previousIndex(static_cast<int>(selectorIndex), listSize);
     requestUpdate();
-    return;
-  }
-  if (mappedInput.wasReleased(MappedInputManager::Button::Down)) {
+  });
+
+  buttonNavigator.onNext([this, listSize] {
+    if (RenderLock::peek()) return;
     selectorIndex = ButtonNavigator::nextIndex(static_cast<int>(selectorIndex), listSize);
     requestUpdate();
-    return;
-  }
+  });
 }
 
 void RecentBooksActivity::render(RenderLock&&) {

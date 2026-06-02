@@ -1,17 +1,29 @@
 #pragma once
 #include <Epub.h>
 
+#include <cstdint>
 #include <memory>
+#include <string>
+#include <vector>
 
 #include "../Activity.h"
 #include "util/ButtonNavigator.h"
 
 class EpubReaderChapterSelectionActivity final : public Activity {
+  struct CachedTocItem {
+    bool loaded = false;
+    int level = 1;
+    int maxWidth = -1;
+    std::string title;
+    std::string displayTitle;
+  };
+
   std::shared_ptr<Epub> epub;
   std::string epubPath;
-  ButtonNavigator buttonNavigator;
   int currentSpineIndex = 0;
   int selectorIndex = 0;
+  uint32_t lastNavigationTime = 0;
+  std::vector<CachedTocItem> tocCache;
 
   // Number of items that fit on a page, derived from logical screen height.
   // This adapts automatically when switching between portrait and landscape.
@@ -19,6 +31,8 @@ class EpubReaderChapterSelectionActivity final : public Activity {
 
   // Total TOC items count
   int getTotalItems() const;
+  void moveSelection(int nextIndex);
+  void confirmSelection();
 
  public:
   explicit EpubReaderChapterSelectionActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,

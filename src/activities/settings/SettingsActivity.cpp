@@ -101,22 +101,26 @@ void SettingsActivity::loop() {
 
   // Handle navigation
   buttonNavigator.onNextRelease([this] {
+    if (RenderLock::peek()) return;
     selectedSettingIndex = ButtonNavigator::nextIndex(selectedSettingIndex, settingsCount + 1);
     requestUpdate();
   });
 
   buttonNavigator.onPreviousRelease([this] {
+    if (RenderLock::peek()) return;
     selectedSettingIndex = ButtonNavigator::previousIndex(selectedSettingIndex, settingsCount + 1);
     requestUpdate();
   });
 
   buttonNavigator.onNextContinuous([this, &hasChangedCategory] {
+    if (RenderLock::peek()) return;
     hasChangedCategory = true;
     selectedCategoryIndex = ButtonNavigator::nextIndex(selectedCategoryIndex, categoryCount);
     requestUpdate();
   });
 
   buttonNavigator.onPreviousContinuous([this, &hasChangedCategory] {
+    if (RenderLock::peek()) return;
     hasChangedCategory = true;
     selectedCategoryIndex = ButtonNavigator::previousIndex(selectedCategoryIndex, categoryCount);
     requestUpdate();

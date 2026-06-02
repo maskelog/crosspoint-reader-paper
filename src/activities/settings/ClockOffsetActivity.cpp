@@ -120,18 +120,22 @@ void ClockOffsetActivity::loop() {
   }
 
   buttonNavigator.onNextRelease([this] {
+    if (RenderLock::peek()) return;
     adjustActiveField(+1);
     requestUpdate();
   });
   buttonNavigator.onPreviousRelease([this] {
+    if (RenderLock::peek()) return;
     adjustActiveField(-1);
     requestUpdate();
   });
   buttonNavigator.onNextContinuous([this] {
+    if (RenderLock::peek()) return;
     adjustActiveField(+1);
     requestUpdate();
   });
   buttonNavigator.onPreviousContinuous([this] {
+    if (RenderLock::peek()) return;
     adjustActiveField(-1);
     requestUpdate();
   });

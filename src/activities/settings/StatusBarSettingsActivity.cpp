@@ -126,21 +126,25 @@ void StatusBarSettingsActivity::loop() {
 
   // Handle navigation
   buttonNavigator.onNextRelease([this] {
+    if (RenderLock::peek()) return;
     selectedIndex = ButtonNavigator::nextIndex(selectedIndex, visibleItemCount);
     requestUpdate();
   });
 
   buttonNavigator.onPreviousRelease([this] {
+    if (RenderLock::peek()) return;
     selectedIndex = ButtonNavigator::previousIndex(selectedIndex, visibleItemCount);
     requestUpdate();
   });
 
   buttonNavigator.onNextContinuous([this] {
+    if (RenderLock::peek()) return;
     selectedIndex = ButtonNavigator::nextIndex(selectedIndex, visibleItemCount);
     requestUpdate();
   });
 
   buttonNavigator.onPreviousContinuous([this] {
+    if (RenderLock::peek()) return;
     selectedIndex = ButtonNavigator::previousIndex(selectedIndex, visibleItemCount);
     requestUpdate();
   });

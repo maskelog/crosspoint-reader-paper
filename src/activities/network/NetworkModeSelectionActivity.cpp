@@ -44,11 +44,13 @@ void NetworkModeSelectionActivity::loop() {
 
   // Handle navigation
   buttonNavigator.onNext([this] {
+    if (RenderLock::peek()) return;
     selectedIndex = ButtonNavigator::nextIndex(selectedIndex, MENU_ITEM_COUNT);
     requestUpdate();
   });
 
   buttonNavigator.onPrevious([this] {
+    if (RenderLock::peek()) return;
     selectedIndex = ButtonNavigator::previousIndex(selectedIndex, MENU_ITEM_COUNT);
     requestUpdate();
   });

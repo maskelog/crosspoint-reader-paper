@@ -39,11 +39,13 @@ void LanguageSelectActivity::loop() {
 
   // Handle navigation
   buttonNavigator.onNextRelease([this] {
+    if (RenderLock::peek()) return;
     selectedIndex = ButtonNavigator::nextIndex(static_cast<int>(selectedIndex), totalItems);
     requestUpdate();
   });
 
   buttonNavigator.onPreviousRelease([this] {
+    if (RenderLock::peek()) return;
     selectedIndex = ButtonNavigator::previousIndex(static_cast<int>(selectedIndex), totalItems);
     requestUpdate();
   });

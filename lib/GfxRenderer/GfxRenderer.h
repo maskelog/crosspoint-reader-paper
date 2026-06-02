@@ -78,6 +78,8 @@ class GfxRenderer {
   void setFallbackFontId(int id) { fallbackFontId_ = id; }
   FontCacheManager* getFontCacheManager() const { return fontCacheManager_; }
   const std::map<int, EpdFontFamily>& getFontMap() const { return fontMap; }
+  void resetTextRenderStats() const;
+  void logTextRenderStats(const char* label) const;
 
   // Orientation control (affects logical width/height and coordinate transforms)
   void setOrientation(const Orientation o) { orientation = o; }

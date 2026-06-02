@@ -7,6 +7,11 @@
 #include "components/UITheme.h"
 #include "fontIds.h"
 
+namespace {
+constexpr unsigned long NAV_REPEAT_START_MS = 300;
+constexpr unsigned long NAV_REPEAT_INTERVAL_MS = 450;
+}  // namespace
+
 int EpubReaderChapterSelectionActivity::getTotalItems() const { return epub->getTocItemsCount(); }
 
 int EpubReaderChapterSelectionActivity::getPageItems() const {
@@ -37,53 +42,84 @@ void EpubReaderChapterSelectionActivity::onEnter() {
     selectorIndex = 0;
   }
 
+  const int totalItems = getTotalItems();
+  tocCache.clear();
+  if (totalItems > 0) {
+    tocCache.resize(static_cast<size_t>(totalItems));
+  }
+
   // Trigger first update
   requestUpdate();
 }
 
 void EpubReaderChapterSelectionActivity::onExit() { Activity::onExit(); }
 
+void EpubReaderChapterSelectionActivity::moveSelection(int nextIndex) {
+  const int totalItems = getTotalItems();
+  if (totalItems <= 0) return;
+  if (RenderLock::peek()) return;
+
+  selectorIndex = nextIndex;
+  lastNavigationTime = millis();
+  requestUpdate();
+}
+
+void EpubReaderChapterSelectionActivity::confirmSelection() {
+  const auto newSpineIndex = epub->getSpineIndexForTocIndex(selectorIndex);
+  if (newSpineIndex == -1) {
+    ActivityResult result;
+    result.isCancelled = true;
+    setResult(std::move(result));
+    finish();
+  } else {
+    setResult(ChapterResult{newSpineIndex});
+    finish();
+  }
+}
+
 void EpubReaderChapterSelectionActivity::loop() {
-  const int pageItems = getPageItems();
   const int totalItems = getTotalItems();
 
-  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
-    const auto newSpineIndex = epub->getSpineIndexForTocIndex(selectorIndex);
-    if (newSpineIndex == -1) {
-      ActivityResult result;
-      result.isCancelled = true;
-      setResult(std::move(result));
-      finish();
-    } else {
-      setResult(ChapterResult{newSpineIndex});
-      finish();
-    }
+  if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
+    confirmSelection();
+    return;
   } else if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
     ActivityResult result;
     result.isCancelled = true;
     setResult(std::move(result));
     finish();
+    return;
   }
 
-  buttonNavigator.onNextRelease([this, totalItems] {
-    selectorIndex = ButtonNavigator::nextIndex(selectorIndex, totalItems);
-    requestUpdate();
-  });
+  if (totalItems <= 0) return;
 
-  buttonNavigator.onPreviousRelease([this, totalItems] {
-    selectorIndex = ButtonNavigator::previousIndex(selectorIndex, totalItems);
-    requestUpdate();
-  });
+  const bool previousPressed = mappedInput.wasPressed(MappedInputManager::Button::Up) ||
+                               mappedInput.wasPressed(MappedInputManager::Button::Left);
+  const bool nextPressed = mappedInput.wasPressed(MappedInputManager::Button::Down) ||
+                           mappedInput.wasPressed(MappedInputManager::Button::Right);
+  const bool previousHeld = mappedInput.isPressed(MappedInputManager::Button::Up) ||
+                            mappedInput.isPressed(MappedInputManager::Button::Left);
+  const bool nextHeld = mappedInput.isPressed(MappedInputManager::Button::Down) ||
+                        mappedInput.isPressed(MappedInputManager::Button::Right);
+  const bool repeatDue = mappedInput.getHeldTime() >= NAV_REPEAT_START_MS &&
+                         (millis() - lastNavigationTime) >= NAV_REPEAT_INTERVAL_MS;
 
-  buttonNavigator.onNextContinuous([this, totalItems, pageItems] {
-    selectorIndex = ButtonNavigator::nextPageIndex(selectorIndex, totalItems, pageItems);
-    requestUpdate();
-  });
+  if (previousPressed || (previousHeld && repeatDue)) {
+    moveSelection(ButtonNavigator::previousIndex(selectorIndex, totalItems));
+    return;
+  }
 
-  buttonNavigator.onPreviousContinuous([this, totalItems, pageItems] {
-    selectorIndex = ButtonNavigator::previousPageIndex(selectorIndex, totalItems, pageItems);
-    requestUpdate();
-  });
+  if (nextPressed || (nextHeld && repeatDue)) {
+    moveSelection(ButtonNavigator::nextIndex(selectorIndex, totalItems));
+    return;
+  }
+
+  if (mappedInput.wasReleased(MappedInputManager::Button::Up) ||
+      mappedInput.wasReleased(MappedInputManager::Button::Left) ||
+      mappedInput.wasReleased(MappedInputManager::Button::Down) ||
+      mappedInput.wasReleased(MappedInputManager::Button::Right)) {
+    lastNavigationTime = 0;
+  }
 }
 
 void EpubReaderChapterSelectionActivity::render(RenderLock&&) {
@@ -124,14 +160,23 @@ void EpubReaderChapterSelectionActivity::render(RenderLock&&) {
     const int displayY = 60 + contentY + i * lineHeight;
     const bool isSelected = (itemIndex == selectorIndex);
 
-    auto item = epub->getTocItem(itemIndex);
+    auto& cachedItem = tocCache[static_cast<size_t>(itemIndex)];
+    if (!cachedItem.loaded) {
+      const auto item = epub->getTocItem(itemIndex);
+      cachedItem.loaded = true;
+      cachedItem.level = item.level;
+      cachedItem.title = item.title;
+    }
 
     // Indent per TOC level while keeping content within the gutter-safe region.
-    const int indentSize = contentX + 20 + (item.level - 1) * 15;
-    const std::string chapterName =
-        renderer.truncatedText(UI_10_FONT_ID, item.title.c_str(), contentWidth - 40 - indentSize);
+    const int indentSize = contentX + 20 + (cachedItem.level - 1) * 15;
+    const int maxTitleWidth = contentWidth - 40 - indentSize;
+    if (cachedItem.maxWidth != maxTitleWidth) {
+      cachedItem.displayTitle = renderer.truncatedText(UI_10_FONT_ID, cachedItem.title.c_str(), maxTitleWidth);
+      cachedItem.maxWidth = maxTitleWidth;
+    }
 
-    renderer.drawText(UI_10_FONT_ID, indentSize, displayY + textYOff, chapterName.c_str(), !isSelected);
+    renderer.drawText(UI_10_FONT_ID, indentSize, displayY + textYOff, cachedItem.displayTitle.c_str(), !isSelected);
   }
 
   const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));

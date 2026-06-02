@@ -178,11 +178,13 @@ void HomeActivity::loop() {
   const int menuCount = getMenuItemCount();
 
   buttonNavigator.onNext([this, menuCount] {
+    if (RenderLock::peek()) return;
     selectorIndex = ButtonNavigator::nextIndex(selectorIndex, menuCount);
     requestUpdate();
   });
 
   buttonNavigator.onPrevious([this, menuCount] {
+    if (RenderLock::peek()) return;
     selectorIndex = ButtonNavigator::previousIndex(selectorIndex, menuCount);
     requestUpdate();
   });
